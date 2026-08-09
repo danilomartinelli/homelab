@@ -7,8 +7,8 @@
     # leaving it untouched.
     ./cloud-init.nix
     ./networking.nix
+    ./docker.nix
     # Added one at a time, each verified by an actual reboot:
-    # ./docker.nix
     # ./tailscale.nix
     # ./secrets.nix
     # ./backup.nix

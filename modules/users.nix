@@ -23,9 +23,12 @@ in
 {
   users.users.root.openssh.authorizedKeys.keys = adminKeys;
 
+  # "docker" is listed only because modules/docker.nix is enabled; the group
+  # is created by that module. Adding it here while docker is disabled makes
+  # activation fail on a nonexistent group.
   users.users.admin = {
     isNormalUser = true;
-    extraGroups = [ "wheel" ];
+    extraGroups = [ "wheel" "docker" ];
     openssh.authorizedKeys.keys = adminKeys;
   };
 
