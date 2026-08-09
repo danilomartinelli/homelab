@@ -4,8 +4,19 @@ result-*
 .DS_Store
 *.swp
 
-# sops-encrypted files are safe to commit; decrypted ones are not.
-secrets/*.yaml
-secrets/*.json
+# secrets/*.yaml is deliberately NOT ignored. Those files are sops-encrypted
+# — committing them is the point: the repo carries the ciphertext, and only
+# the recipients in .sops.yaml (this laptop, and kodo's SSH host key) can
+# read it. Ignoring them would mean the server has no way to obtain its own
+# secrets from a clone.
+#
+# Verify before every commit that the file really is encrypted:
+#     grep -c 'ENC\[AES256' secrets/services.yaml     # must be > 0
+# A plaintext commit cannot be undone by a later force-push; rotate the
+# credentials instead.
+
+# Never commit decrypted output or dotenv files.
+secrets/*.dec
+secrets/*.plain
 secrets/.env
 !secrets/.env.example
