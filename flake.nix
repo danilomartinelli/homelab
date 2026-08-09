@@ -23,13 +23,19 @@
     };
   };
 
-  outputs = { self, nixpkgs, ... }:
+  outputs = { self, nixpkgs, sops-nix, ... }:
     let
       system = "x86_64-linux";
     in {
       nixosConfigurations.kodo = nixpkgs.lib.nixosSystem {
         inherit system;
         modules = [
+          # sops-nix must be applied here, not just declared as an input.
+          # modules/secrets.nix sets `sops.*` options, which do not exist
+          # until this module is in the list — without it the whole
+          # configuration fails to evaluate with an "option does not exist"
+          # error that points at secrets.nix rather than at this file.
+          sops-nix.nixosModules.sops
           ./modules/default.nix
           ./hosts/kodo/default.nix
         ];

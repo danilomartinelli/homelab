@@ -9,8 +9,10 @@
     ./networking.nix
     ./docker.nix
     ./tailscale.nix
-    # Added one at a time, each verified by an actual reboot:
-    # ./secrets.nix
-    # ./backup.nix
+    # secrets.nix must come before anything that reads
+    # config.sops.secrets.*, and requires secrets/services.yaml to exist and
+    # be decryptable by kodo's host key — otherwise activation fails.
+    ./secrets.nix
+    ./backup.nix
   ];
 }

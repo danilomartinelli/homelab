@@ -37,6 +37,18 @@
   boot.growPartition = true;
   services.qemuGuest.enable = true;
 
+  # Service data root. Compose stacks live under /var/lib/homelab/<name>/
+  # and modules/backup.nix lists it as a backup path.
+  #
+  # It has to be created declaratively: restic skips a nonexistent path
+  # SILENTLY — no warning, no non-zero exit. The first backup run looked
+  # successful while covering only /etc, which is the failure mode a backup
+  # must never have. Verify coverage with `restic snapshots` and check the
+  # Paths column, not just the exit status.
+  systemd.tmpfiles.rules = [
+    "d /var/lib/homelab 0750 root root -"
+  ];
+
   system.stateVersion = "26.05";
 
   networking.hostName = "kodo";
