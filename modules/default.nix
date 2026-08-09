@@ -8,8 +8,8 @@
     ./cloud-init.nix
     ./networking.nix
     ./docker.nix
+    ./tailscale.nix
     # Added one at a time, each verified by an actual reboot:
-    # ./tailscale.nix
     # ./secrets.nix
     # ./backup.nix
   ];
