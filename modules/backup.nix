@@ -53,5 +53,40 @@
 
   # restic is also wanted interactively — for `restic snapshots`, restores,
   # and integrity checks. The service brings its own copy, but not onto PATH.
-  environment.systemPackages = [ pkgs.restic ];
+  #
+  # Bare `restic` is unusable by hand: it needs the repository URL, the
+  # password file and both R2 credentials exported first, and without them
+  # it fails with "Please specify repository location". That friction is a
+  # real hazard — a backup nobody inspects is a hypothesis, not a backup.
+  # `kodo-restic` loads the same secrets the timer uses and forwards its
+  # arguments, so checking coverage is one command:
+  #
+  #   kodo-restic snapshots      # verify the Paths column, not just exit 0
+  #   kodo-restic check          # verify repository integrity
+  #   kodo-restic restore latest --target /tmp/restore-test
+  #
+  # Requires root: the secrets under /run/secrets are mode 0400 root-owned.
+  environment.systemPackages = [
+    pkgs.restic
+    (pkgs.writeShellScriptBin "kodo-restic" ''
+      set -euo pipefail
+
+      if [ "$(id -u)" -ne 0 ]; then
+        echo "kodo-restic: must run as root (secrets are root-only)" >&2
+        exit 1
+      fi
+
+      RESTIC_REPOSITORY="$(cat ${config.sops.secrets."restic/repository".path})"
+      export RESTIC_REPOSITORY
+      export RESTIC_PASSWORD_FILE=${config.sops.secrets."restic/password".path}
+
+      # r2-env is a systemd EnvironmentFile: plain KEY=VALUE lines.
+      set -a
+      # shellcheck disable=SC1091
+      . ${config.sops.secrets."restic/r2-env".path}
+      set +a
+
+      exec ${pkgs.restic}/bin/restic "$@"
+    '')
+  ];
 }
