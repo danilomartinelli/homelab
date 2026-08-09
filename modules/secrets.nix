@@ -5,21 +5,15 @@
 # server. Secrets are materialised under /run/secrets/<name> at activation,
 # owned by root and mode 0400 unless overridden.
 #
-# This module declares NO secrets yet, on purpose. sops-nix fails activation
-# if `defaultSopsFile` points at a file that does not exist or cannot be
-# decrypted, and an empty secrets file buys nothing. Add entries here in the
-# same change that introduces the secret and the service consuming it —
-# never ahead of it.
+# ORDERING MATTERS: sops-nix fails activation if defaultSopsFile points at a
+# file that does not exist or cannot be decrypted. Do not add this module to
+# modules/default.nix until secrets/services.yaml has actually been created
+# with `sops secrets/services.yaml`. Declaring secrets ahead of the file
+# turns a missing input into a failed rebuild.
 #
-# To add one:
-#   1. sops secrets/services.yaml          # creates/edits, encrypts on save
-#   2. declare it below under sops.secrets
-#   3. reference config.sops.secrets.<name>.path from the consuming module
-#
-# Verify after activation with:
-#   ls -l /run/secrets/
-# A missing file means activation silently skipped it; check
-# `journalctl -u sops-install-secrets`.
+# Verify after activation:
+#   ls -l /run/secrets/restic/
+#   journalctl -u sops-install-secrets
 
 { config, pkgs, lib, ... }:
 {
@@ -28,7 +22,13 @@
     # age identity to the machine.
     age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
-    # No defaultSopsFile and no secrets while none exist. Setting either
-    # ahead of a real secret turns a missing file into a failed activation.
+    defaultSopsFile = ../secrets/services.yaml;
+
+    secrets = {
+      # Consumed by services.restic.backups.kodo in modules/backup.nix.
+      "restic/repository" = { };
+      "restic/password" = { };
+      "restic/r2-env" = { };
+    };
   };
 }

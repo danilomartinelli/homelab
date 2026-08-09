@@ -1,39 +1,57 @@
-# restic backup to Backblaze B2 (or any S3-compatible backend). The
-# repository URL and credentials come from sops so the secrets never
-# appear in this file.
+# restic backups to Cloudflare R2.
+#
+# restic encrypts and deduplicates locally before uploading, so R2 never
+# sees plaintext and the bucket does not need to be trusted. What must be
+# protected is RESTIC_PASSWORD: lose it and the backups are unrecoverable,
+# because there is no key escrow. It lives in sops alongside the R2
+# credentials.
+#
+# R2 speaks the S3 API, so the repository URL is:
+#   s3:https://<account-id>.r2.cloudflarestorage.com/<bucket>
+# and credentials arrive as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# through environmentFile.
+#
+# R2 charges no egress, which matters for restores: pulling a full backup
+# out of B2 or S3 costs real money, and a backup you avoid restoring from
+# is not a backup.
 
 { config, pkgs, lib, ... }:
-let
-  repo = "b2:homelab-bucket:/restic";
-  passwordFile = config.sops.placeholder."restic/password";
-  b2KeyFile = config.sops.placeholder."restic/b2-account-key";
-  b2IdFile = config.sops.placeholder."restic/b2-account-id";
-in
 {
-  services.restic.backups.homelab = {
-    inherit repo;
-    passwordFile = passwordFile;
-    environmentFile = pkgs.writeText "restic-b2.env" ''
-      B2_ACCOUNT_ID_FILE=${b2IdFile}
-      B2_ACCOUNT_KEY_FILE=${b2KeyFile}
-    '';
+  services.restic.backups.kodo = {
     initialize = true;
+
+    repositoryFile = config.sops.secrets."restic/repository".path;
+    passwordFile = config.sops.secrets."restic/password".path;
+    environmentFile = config.sops.secrets."restic/r2-env".path;
+
     paths = [
       "/var/lib/homelab"
       "/etc"
     ];
+
     exclude = [
-      "/var/lib/homelab/.cache"
+      "/var/lib/homelab/**/.cache"
+      "/var/lib/homelab/**/node_modules"
       "**/.git"
     ];
+
     timerConfig = {
       OnCalendar = "daily";
+      # Run after a missed window (a reboot, a powered-off machine) instead
+      # of silently skipping until the next day.
       Persistent = true;
+      RandomizedDelaySec = "30m";
     };
+
+    # Retention is applied by `restic forget --prune` after each run.
     pruneOpts = [
-      "--keep-daily=7"
-      "--keep-weekly=4"
-      "--keep-monthly=6"
+      "--keep-daily 7"
+      "--keep-weekly 4"
+      "--keep-monthly 6"
     ];
   };
+
+  # restic is also wanted interactively — for `restic snapshots`, restores,
+  # and integrity checks. The service brings its own copy, but not onto PATH.
+  environment.systemPackages = [ pkgs.restic ];
 }
