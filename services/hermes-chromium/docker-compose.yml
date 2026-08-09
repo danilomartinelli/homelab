@@ -1,0 +1,56 @@
+# Headless Chromium with Chrome DevTools Protocol exposed for live
+# observation. Hermes connects here instead of spinning up its own
+# browser; the user's `chrome://inspect` points at the same CDP socket.
+#
+# `noVNC` is included so the session can be watched from any browser
+# without installing a local Chrome — useful on a phone, an iPad, or a
+# borrowed machine. Port 6080 serves a web UI; the iframe renders the
+# desktop. Port 9222 is the CDP endpoint for tooling.
+#
+# This container runs as root because headless Chromium in Docker
+# commonly needs it. The actual chromium process drops privileges via
+# `--user-data-dir` to a non-root path. Bind-mounts are read-only where
+# the agent does not need to write; the data dir is RW because Chromium
+# writes profile state there.
+#
+# Both ports bind to 127.0.0.1 on the host. Reaching them from the Mac
+# requires Tailscale SSH port-forwarding OR a Caddy reverse proxy with
+# auth — a future change. For now, Tailscale-only is fine.
+services:
+  chromium:
+    image: ghcr.io/linuxserver/chromium:latest
+    container_name: hermes-chromium
+    restart: unless-stopped
+    network_mode: host
+    user: root
+    security_opt:
+      - seccomp:unconfined
+    shm_size: "2g"
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "America/Sao_Paulo"
+      # Disable the LinuxServer HTTPS auto-config so the container stays
+      # reachable on plain HTTP behind a future Caddy proxy if you want
+      # auth rather than direct Tailscale.
+      HTTPS: "false"
+    volumes:
+      - /var/lib/homelab/hermes/chromium-config:/config
+      - /var/lib/homelab/hermes/data/downloads:/downloads
+    command:
+      # The image's default entrypoint already runs Chromium with the right
+      # noVNC flags. We override only the remote-debugging port and
+      # disable the welcome tour.
+      - --no-first-run
+        --no-default-browser-check
+        --remote-debugging-port=9222
+        --remote-debugging-address=0.0.0.0
+        # Make sure the screenshot / devtools network endpoints are
+        # reachable. LinuxServer already binds noVNC on 6080.
+        --remote-allow-origins=*
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

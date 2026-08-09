@@ -1,0 +1,48 @@
+# Hermes Agent — deployed as the official Docker image so updates track the
+# upstream 2026.8.3 release without me having to repackage a Python app on
+# NixOS. The tag is pinned for the same reason nixpkgs was pinned during
+# deploy-proving: `latest` removes the diff from the set of variables.
+#
+# HERMES_HOME is a bind mount so config, sessions, memories and the Baileys
+# WhatsApp session survive container restarts and reboots. The same mount
+# also carries the 96 shared skills from _shared/agents/skills — Hermes
+# reads them like OpenCode does (frontmatter + SKILL.md), so the library
+# lands here unchanged.
+#
+# Env wiring: every key below is sourced from the sops-decrypted
+# /run/secrets/hermes/hermes.env file, which is an EnvironmentFile= style
+# `KEY=VALUE` document — no shell expansion, no quoting. The wrapper used
+# to build it runs once at activation; see the secrets.nix module.
+#
+# Code is bound to loopback. Tailscale provides the path in.
+services:
+  hermes:
+    image: nousresearch/hermes-agent:v2026.8.3
+    container_name: hermes
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    env_file:
+      - /run/secrets/hermes/hermes.env
+    volumes:
+      - /var/lib/homelab/hermes/data:/home/hermes/.hermes
+      - /var/lib/homelab/hermes/skills:/home/hermes/.hermes/skills:ro
+      # Bind the shared skills into the user's skill root. The README of
+      # _shared/agents/skills still lives at /home/hermes/.hermes/skills for
+      # human browsing, but the loader reads the per-skill SKILL.md from
+      # exactly that path, so the mount IS the discovery.
+    command:
+      # Run as the in-image non-root user; keep stdio for the systemd
+      # journal to capture crashes.
+      - --no-browser
+        # Browser automation goes through the separate chromium container
+        # exposed via CDP. The flag avoids spinning up a second Chromium
+        # inside the agent's own runtime.
+    healthcheck:
+      # The agent's own liveness probe. It does not crash on transient
+      # outbound failures, so it is a fair signal.
+      test: ["CMD", "python3", "-c", "import os, sys; sys.exit(0 if os.path.exists('/home/hermes/.hermes/config.yaml') else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
