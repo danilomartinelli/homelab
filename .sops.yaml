@@ -1,0 +1,29 @@
+# age recipients allowed to decrypt files under secrets/.
+#
+# Two keys, for two different jobs:
+#
+#   admin — the laptop key at ~/.config/sops/age/keys_personal.txt. This is
+#           what lets a human run `sops secrets/services.yaml` and edit.
+#
+#   kodo  — derived from the host's SSH host key with:
+#             ssh-to-age < /etc/ssh/ssh_host_ed25519_key.pub
+#           sops-nix reads /etc/ssh/ssh_host_ed25519_key at activation and
+#           derives the same key, so the machine decrypts its own secrets at
+#           boot with no additional key material to distribute.
+#
+# Reinstalling the OS regenerates the host key and therefore invalidates the
+# kodo recipient. After a reinstall: re-derive it, update the value below,
+# and run `sops updatekeys secrets/*.yaml` so existing files are re-encrypted
+# to the new key. Skipping that step leaves the machine unable to decrypt,
+# which surfaces as a failed activation rather than a clear error.
+
+keys:
+  - &admin age1lcnsc20rgmvqya8k7c3f3k6s9edcce8w52mf9avuz7srthxdx4rq2q9cqd
+  - &kodo age15wnj6uwmgzs3ysqsnc3qfrc58lvre8sc09vw5m9af3ugc2nd2cwqggcudp
+
+creation_rules:
+  - path_regex: secrets/[^/]+\.(yaml|json|env)$
+    key_groups:
+      - age:
+          - *admin
+          - *kodo
