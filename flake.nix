@@ -2,14 +2,20 @@
   description = "Homelab NixOS configuration (kodo)";
 
   inputs = {
-    # Pinned to the exact nixpkgs revision the Hostinger image ships
-    # (nixos-version reports 26.05.6503.21ea275a7c46). Pinning removes the
-    # kernel from the set of variables while the deploy pipeline is being
-    # proven: the stock system boots on 6.18.40, and tracking the branch
-    # instead produced 6.18.43. After a reboot has been verified end to end,
-    # move this back to `github:NixOS/nixpkgs/nixos-26.05` so the host gets
-    # security updates — a permanent pin is a liability, not a safety net.
-    nixpkgs.url = "github:NixOS/nixpkgs/21ea275a7c46";
+    # Tracks the release branch so the host receives security updates.
+    #
+    # This was temporarily pinned to 21ea275a7c46 — the revision the
+    # provider image ships — while the deploy pipeline was being proven.
+    # The pin made the built kernel byte-identical to the one already known
+    # to boot, which removed it as a variable while four separate outages
+    # were being diagnosed. It was a debugging aid, not a resting state: a
+    # permanent pin freezes security updates.
+    #
+    # Unpinning changes the kernel. Treat every `nix flake update` as a
+    # change that needs the full sequence in README.md: build, diff the
+    # closure against /run/current-system, test, verify from a NEW
+    # connection, then boot and reboot.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
     sops-nix = {
       url = "github:Mic92/sops-nix";
