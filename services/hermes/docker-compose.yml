@@ -96,6 +96,23 @@ services:
       WHATSAPP_CLOUD_WEBHOOK_PORT: "8090"
       WHATSAPP_CLOUD_WEBHOOK_PATH: "/whatsapp/webhook"
 
+      # Packages installed into the persisted volume rather than the image.
+      #
+      # The image sets HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages but
+      # does NOT add it to PYTHONPATH, so anything installed there is invisible
+      # to the interpreter. Verified: `import faster_whisper` failed with
+      # ModuleNotFoundError until PYTHONPATH was set explicitly, then resolved
+      # to 1.2.1.
+      #
+      # This matters because /opt/hermes/.venv lives in the image layer, so a
+      # package installed there is lost whenever the container is recreated
+      # — which happens on every `docker compose up` after a config change.
+      # /opt/data is the bind mount, so installs there survive.
+      #
+      # Currently carries faster-whisper, which backs the `stt` toolset
+      # (local transcription, no API key).
+      PYTHONPATH: "/opt/data/lazy-packages"
+
     volumes:
       # The image's declared volume. Holds config.yaml, auth.json (Codex
       # OAuth), sessions, memories, skills, and the Baileys WhatsApp session
