@@ -69,7 +69,17 @@ services:
     environment:
       # Point the browser toolset at the sibling container's CDP endpoint
       # rather than the bundled headless shell, so sessions are observable.
-      HERMES_BROWSER_CDP_URL: "http://127.0.0.1:9222"
+      #
+      # Port 9223, not 9222: Chromium refuses to bind CDP anywhere but its
+      # own container loopback, so a socat sidecar in the Chromium network
+      # namespace forwards 9223 -> 127.0.0.1:9222. The Chromium stack
+      # publishes 9223 on the host's loopback, and 127.0.0.1 resolves to the
+      # host here because this container uses host networking.
+      #
+      # If this container ever leaves host networking, this needs to become
+      # host.docker.internal (plus an extra_hosts entry) or both stacks need
+      # to share a bridge network.
+      HERMES_BROWSER_CDP_URL: "http://127.0.0.1:9223"
       TZ: "America/Sao_Paulo"
 
       # WhatsApp Cloud API webhook. Values read out of

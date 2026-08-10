@@ -4,35 +4,55 @@
 # /defaults/autostart rather than assumed. The corrections inspection
 # forced, recorded so they are not reintroduced:
 #
-#   Ports are 3000 (HTTP) and 3001 (HTTPS) — NOT 6080. The image exposes
-#   exactly those two.
+#   Ports are 3000 (HTTP) and 3001 (HTTPS) — NOT 6080.
 #
 #   Extra Chromium flags go through the CHROME_CLI environment variable.
 #   /defaults/autostart is literally `wrapped-chromium ${CHROME_CLI}`, so a
 #   compose-level `command:` would replace the s6 entrypoint instead of
 #   reaching Chromium, and the browser would never start.
 #
-#   The volume is /config, and PUID/PGID own it.
+#   Chromium IGNORES --remote-debugging-address. It accepts the flag, echoes
+#   it in /proc/<pid>/cmdline, and binds 127.0.0.1 regardless — an upstream
+#   guard against exposing CDP. Confirmed across three attempts: with
+#   address=0.0.0.0, and with an explicit --user-data-dir (the documented
+#   workaround), `ss` inside the container still reported
+#   `LISTEN 127.0.0.1:9222`, and every external address — published port and
+#   bridge IP alike — failed with "Connection reset by peer" while CDP
+#   answered normally from inside the container.
 #
-# Why this exists at all: the Hermes image already bundles Playwright, but
-# only chromium_headless_shell, which renders nothing a human can watch.
-# This stack runs a real Chromium under a virtual display with a noVNC
-# front-end, so the same browser Hermes drives over CDP is visible in a
-# browser tab.
+#   Hence the cdp-relay sidecar below. Arguing with the flag was the wrong
+#   approach; forwarding the port is deterministic.
 #
-# Exposure: network_mode host binds 3000/3001/9222 on all interfaces. The
-# firewall in modules/networking.nix does not open them, so the only path in
-# is Tailscale (trustedInterfaces includes tailscale0) — reachable at
-# kodo.zubron-palermo.ts.net:3000 from any device on the tailnet, and closed
-# to the public internet. Do not add these ports to allowedTCPPorts: an
-# unauthenticated Chromium on the open internet is a remote code execution
-# primitive, and CDP has no authentication whatsoever.
+# Why this stack exists at all: the Hermes image bundles Playwright, but only
+# chromium_headless_shell, which renders nothing a human can watch. This runs
+# a real Chromium under a virtual display with a noVNC front-end, so the
+# browser Hermes drives over CDP is visible in a browser tab.
 services:
   chromium:
     image: ghcr.io/linuxserver/chromium:latest
     container_name: hermes-chromium
     restart: unless-stopped
-    network_mode: host
+
+    # Explicit port mapping rather than network_mode: host.
+    #
+    # With host networking the image's nginx binds 0.0.0.0:3000 directly on
+    # the host and there is no way to narrow it: LinuxServer exposes only
+    # CUSTOM_PORT / CUSTOM_HTTPS_PORT, which change the port number, not the
+    # bind address. That left an unauthenticated Chromium listening on every
+    # interface, protected solely by the firewall.
+    #
+    # Binding the published port to a specific host address makes the
+    # restriction structural instead of policy-dependent. The tailnet IP is
+    # stable for this node (assigned by Tailscale, persisted in
+    # /var/lib/tailscale); if the node is re-registered and the address
+    # changes, this fails loudly at container start rather than silently
+    # exposing the port.
+    # 9223 is published here rather than on cdp-relay because that service
+    # shares this container's network namespace — a container using
+    # `network_mode: service:` cannot declare its own port mappings.
+    ports:
+      - "100.111.46.72:3000:3000"
+      - "127.0.0.1:9223:9223"
 
     security_opt:
       - seccomp:unconfined
@@ -44,29 +64,43 @@ services:
       PGID: "0"
       TZ: "America/Sao_Paulo"
       TITLE: "kodo — agent browser"
-      # CDP on loopback for Hermes, plus the flags a containerised Chromium
-      # needs. --remote-allow-origins is required or CDP rejects the
-      # WebSocket upgrade from a non-browser client.
+      # --remote-debugging-address is omitted deliberately: Chromium ignores
+      # it (see the header). The cdp-relay service below is what makes 9222
+      # reachable off the container's loopback.
       CHROME_CLI: >-
         --remote-debugging-port=9222
-        --remote-debugging-address=127.0.0.1
         --remote-allow-origins=*
         --no-first-run
         --no-default-browser-check
         --disable-dev-shm-usage
 
     volumes:
-      # Chromium profile, extensions and noVNC state.
       - /var/lib/homelab/hermes/chromium-config:/config
-      # Shared download directory so files the agent fetches are reachable
-      # from the Hermes side without a second copy.
       - /var/lib/homelab/hermes/data/downloads:/config/Downloads
 
     healthcheck:
-      # Ask CDP itself, not the web UI: this is the endpoint Hermes depends
-      # on, and it answers only once Chromium is actually up.
+      # Ask CDP from inside the container, where it does answer.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9222/json/version >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 4
       start_period: 45s
+
+  # Forwards the host's loopback:9222 into Chromium's container-local
+  # loopback:9222, which is the only address Chromium will bind.
+  #
+  # network_mode: service:chromium puts this container in Chromium's network
+  # namespace, so `127.0.0.1` here IS Chromium's loopback. socat then accepts
+  # on 0.0.0.0 — reachable through the published port — and forwards inward.
+  # fork keeps it serving more than one connection; CDP opens several.
+  cdp-relay:
+    image: alpine/socat:latest
+    container_name: hermes-cdp-relay
+    restart: unless-stopped
+    depends_on:
+      chromium:
+        condition: service_healthy
+    network_mode: "service:chromium"
+    command: >-
+      TCP-LISTEN:9223,fork,reuseaddr
+      TCP:127.0.0.1:9222
