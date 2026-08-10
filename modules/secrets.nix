@@ -29,6 +29,28 @@
       "restic/repository" = { };
       "restic/password" = { };
       "restic/r2-env" = { };
+
+      # Consumed by the hermes container as an env_file. Docker reads the
+      # path from the host, so the secret has to be world-readable at the
+      # directory level — hence mode 0400 on the file but a fixed path
+      # rather than the default /run/secrets/<name> which is 0700 root.
+      #
+      # 0440 with group "keys" lets the docker daemon (running as root)
+      # read it while keeping it off-limits to unprivileged users.
+      "hermes/env" = {
+        mode = "0440";
+        group = "keys";
+      };
+
+      # The seven WHATSAPP_CLOUD_* values, kept separate from hermes/env so
+      # the systemd unit can gate on this file's existence. `gateway run`
+      # exits 0 when no messaging platform is configured, which Docker's
+      # restart policy turns into an invisible loop; making "is WhatsApp
+      # configured?" a filesystem question lets ConditionPathExists answer it.
+      "hermes/whatsapp-cloud-env" = {
+        mode = "0440";
+        group = "keys";
+      };
     };
   };
 }

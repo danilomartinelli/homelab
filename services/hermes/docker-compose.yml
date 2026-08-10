@@ -1,48 +1,102 @@
-# Hermes Agent — deployed as the official Docker image so updates track the
-# upstream 2026.8.3 release without me having to repackage a Python app on
-# NixOS. The tag is pinned for the same reason nixpkgs was pinned during
-# deploy-proving: `latest` removes the diff from the set of variables.
+# Hermes Agent — official image, pinned tag.
 #
-# HERMES_HOME is a bind mount so config, sessions, memories and the Baileys
-# WhatsApp session survive container restarts and reboots. The same mount
-# also carries the 96 shared skills from _shared/agents/skills — Hermes
-# reads them like OpenCode does (frontmatter + SKILL.md), so the library
-# lands here unchanged.
+# Every value here was read off `docker image inspect`, the image's own
+# entrypoint scripts, and a live probe of `gateway run` — not assumed. The
+# assumptions that verification disproved, kept as a record:
 #
-# Env wiring: every key below is sourced from the sops-decrypted
-# /run/secrets/hermes/hermes.env file, which is an EnvironmentFile= style
-# `KEY=VALUE` document — no shell expansion, no quoting. The wrapper used
-# to build it runs once at activation; see the secrets.nix module.
+#   HERMES_HOME is /opt/data, NOT /home/hermes/.hermes. The image declares
+#   /opt/data as its volume and sets HERMES_WRITE_SAFE_ROOT to match.
 #
-# Code is bound to loopback. Tailscale provides the path in.
+#   `init: true` is actively harmful. entrypoint-dispatch.sh delegates to
+#   s6-overlay's /init only when it is PID 1; Docker's own init takes that
+#   slot and the script falls back to an unsupervised path, printing
+#   "Supervised services are unavailable in this runtime". The image
+#   supervises main-hermes, dashboard, user and user2.
+#
+#   `--user <uid>` is rejected by design. main-wrapper.sh fails fast on any
+#   non-root, non-hermes UID because the baked image directories are owned by
+#   the build UID. The container starts root and drops to `hermes` via
+#   s6-setuidgid on its own.
+#
+#   Running with NO command is a restart loop, not a daemon. main-wrapper.sh
+#   routes "no args" to bare `hermes`, which is the interactive CLI; with no
+#   TTY it reads EOF, prints "Goodbye!" and exits 0. Docker's
+#   `restart: unless-stopped` then restarts it forever — observed
+#   RestartCount climbing 3 -> 4 in twelve seconds while `docker ps` still
+#   reported "(healthy)".
+#
+#   `hermes --version` is a worthless healthcheck for exactly that reason: it
+#   proves the binary exists, not that the agent runs. It reported healthy
+#   throughout the restart loop.
+#
+# ORDERING CONSTRAINT — this stack cannot start before WhatsApp is paired.
+# A live probe of `gateway run` with no channel configured logs
+# "No messaging platforms enabled" and exits 0, which is the same restart
+# loop by a different route. Pair first (see README), then start the unit.
+#
+# Playwright ships in the image (PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/
+# .playwright) but only as chromium_headless_shell, which renders nothing a
+# human can watch. Live observation is why hermes-chromium exists separately.
 services:
   hermes:
     image: nousresearch/hermes-agent:v2026.8.3
     container_name: hermes
     restart: unless-stopped
-    init: true
+
+    # host networking so the agent reaches the sibling Chromium's CDP socket
+    # on 127.0.0.1:9222 without a bridge, and so tailnet names resolve as
+    # they do on the host.
     network_mode: host
+
+    # The messaging gateway: WhatsApp, Telegram, Discord, plus the cron
+    # scheduler. `run` keeps it in the foreground, which the subcommand's own
+    # help recommends for Docker.
+    command: ["gateway", "run"]
+
+    # API keys from sops: /run/secrets/hermes/env, plain KEY=VALUE, mode 0440
+    # group keys so the docker daemon can read it and users cannot.
     env_file:
-      - /run/secrets/hermes/hermes.env
+      # Model provider keys.
+      - /run/secrets/hermes/env
+      # The seven WHATSAPP_CLOUD_* values. Split into its own secret so the
+      # systemd unit can gate on its existence: `gateway run` exits 0 when no
+      # messaging platform is configured, and Docker's restart policy turns
+      # that into a silent loop. Keeping the WhatsApp credentials in a
+      # separate file makes "is WhatsApp configured?" a filesystem question
+      # systemd can answer with ConditionPathExists.
+      - /run/secrets/hermes/whatsapp-cloud-env
+
+    environment:
+      # Point the browser toolset at the sibling container's CDP endpoint
+      # rather than the bundled headless shell, so sessions are observable.
+      HERMES_BROWSER_CDP_URL: "http://127.0.0.1:9222"
+      TZ: "America/Sao_Paulo"
+
+      # WhatsApp Cloud API webhook. Values read out of
+      # gateway/platforms/whatsapp_cloud.py rather than guessed:
+      # DEFAULT_WEBHOOK_PORT = 8090, DEFAULT_WEBHOOK_PATH =
+      # "/whatsapp/webhook", DEFAULT_WEBHOOK_HOST = None.
+      #
+      # HOST is pinned to loopback on purpose. The default of None makes
+      # aiohttp bind every interface (IPv4 + IPv6), and with
+      # network_mode: host that would publish 8090 straight to the internet,
+      # bypassing Caddy, TLS, and the single-path restriction. Caddy is the
+      # only thing that should listen publicly.
+      WHATSAPP_CLOUD_WEBHOOK_HOST: "127.0.0.1"
+      WHATSAPP_CLOUD_WEBHOOK_PORT: "8090"
+      WHATSAPP_CLOUD_WEBHOOK_PATH: "/whatsapp/webhook"
+
     volumes:
-      - /var/lib/homelab/hermes/data:/home/hermes/.hermes
-      - /var/lib/homelab/hermes/skills:/home/hermes/.hermes/skills:ro
-      # Bind the shared skills into the user's skill root. The README of
-      # _shared/agents/skills still lives at /home/hermes/.hermes/skills for
-      # human browsing, but the loader reads the per-skill SKILL.md from
-      # exactly that path, so the mount IS the discovery.
-    command:
-      # Run as the in-image non-root user; keep stdio for the systemd
-      # journal to capture crashes.
-      - --no-browser
-        # Browser automation goes through the separate chromium container
-        # exposed via CDP. The flag avoids spinning up a second Chromium
-        # inside the agent's own runtime.
+      # The image's declared volume. Holds config.yaml, auth.json (Codex
+      # OAuth), sessions, memories, skills, and the Baileys WhatsApp session
+      # — everything that must survive replacing the container.
+      - /var/lib/homelab/hermes/data:/opt/data
+
     healthcheck:
-      # The agent's own liveness probe. It does not crash on transient
-      # outbound failures, so it is a fair signal.
-      test: ["CMD", "python3", "-c", "import os, sys; sys.exit(0 if os.path.exists('/home/hermes/.hermes/config.yaml') else 1)"]
+      # Test the thing that actually matters: the gateway process is alive.
+      # Anything that merely invokes the CLI passes even mid-restart-loop.
+      test: ["CMD-SHELL", "pgrep -f 'gateway run' >/dev/null || exit 1"]
       interval: 60s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 90s

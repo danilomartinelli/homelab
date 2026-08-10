@@ -1,56 +1,72 @@
-# Headless Chromium with Chrome DevTools Protocol exposed for live
-# observation. Hermes connects here instead of spinning up its own
-# browser; the user's `chrome://inspect` points at the same CDP socket.
+# Chromium with a watchable session, for observing what the agent does.
 #
-# `noVNC` is included so the session can be watched from any browser
-# without installing a local Chrome — useful on a phone, an iPad, or a
-# borrowed machine. Port 6080 serves a web UI; the iframe renders the
-# desktop. Port 9222 is the CDP endpoint for tooling.
+# Values verified against `docker image inspect` and the image's own
+# /defaults/autostart rather than assumed. The corrections inspection
+# forced, recorded so they are not reintroduced:
 #
-# This container runs as root because headless Chromium in Docker
-# commonly needs it. The actual chromium process drops privileges via
-# `--user-data-dir` to a non-root path. Bind-mounts are read-only where
-# the agent does not need to write; the data dir is RW because Chromium
-# writes profile state there.
+#   Ports are 3000 (HTTP) and 3001 (HTTPS) — NOT 6080. The image exposes
+#   exactly those two.
 #
-# Both ports bind to 127.0.0.1 on the host. Reaching them from the Mac
-# requires Tailscale SSH port-forwarding OR a Caddy reverse proxy with
-# auth — a future change. For now, Tailscale-only is fine.
+#   Extra Chromium flags go through the CHROME_CLI environment variable.
+#   /defaults/autostart is literally `wrapped-chromium ${CHROME_CLI}`, so a
+#   compose-level `command:` would replace the s6 entrypoint instead of
+#   reaching Chromium, and the browser would never start.
+#
+#   The volume is /config, and PUID/PGID own it.
+#
+# Why this exists at all: the Hermes image already bundles Playwright, but
+# only chromium_headless_shell, which renders nothing a human can watch.
+# This stack runs a real Chromium under a virtual display with a noVNC
+# front-end, so the same browser Hermes drives over CDP is visible in a
+# browser tab.
+#
+# Exposure: network_mode host binds 3000/3001/9222 on all interfaces. The
+# firewall in modules/networking.nix does not open them, so the only path in
+# is Tailscale (trustedInterfaces includes tailscale0) — reachable at
+# kodo.zubron-palermo.ts.net:3000 from any device on the tailnet, and closed
+# to the public internet. Do not add these ports to allowedTCPPorts: an
+# unauthenticated Chromium on the open internet is a remote code execution
+# primitive, and CDP has no authentication whatsoever.
 services:
   chromium:
     image: ghcr.io/linuxserver/chromium:latest
     container_name: hermes-chromium
     restart: unless-stopped
     network_mode: host
-    user: root
+
     security_opt:
       - seccomp:unconfined
-    shm_size: "2g"
+    # Chromium exhausts the default 64 MB /dev/shm and crashes tabs.
+    shm_size: "2gb"
+
     environment:
-      PUID: "1000"
-      PGID: "1000"
+      PUID: "0"
+      PGID: "0"
       TZ: "America/Sao_Paulo"
-      # Disable the LinuxServer HTTPS auto-config so the container stays
-      # reachable on plain HTTP behind a future Caddy proxy if you want
-      # auth rather than direct Tailscale.
-      HTTPS: "false"
-    volumes:
-      - /var/lib/homelab/hermes/chromium-config:/config
-      - /var/lib/homelab/hermes/data/downloads:/downloads
-    command:
-      # The image's default entrypoint already runs Chromium with the right
-      # noVNC flags. We override only the remote-debugging port and
-      # disable the welcome tour.
-      - --no-first-run
-        --no-default-browser-check
+      TITLE: "kodo — agent browser"
+      # CDP on loopback for Hermes, plus the flags a containerised Chromium
+      # needs. --remote-allow-origins is required or CDP rejects the
+      # WebSocket upgrade from a non-browser client.
+      CHROME_CLI: >-
         --remote-debugging-port=9222
-        --remote-debugging-address=0.0.0.0
-        # Make sure the screenshot / devtools network endpoints are
-        # reachable. LinuxServer already binds noVNC on 6080.
+        --remote-debugging-address=127.0.0.1
         --remote-allow-origins=*
+        --no-first-run
+        --no-default-browser-check
+        --disable-dev-shm-usage
+
+    volumes:
+      # Chromium profile, extensions and noVNC state.
+      - /var/lib/homelab/hermes/chromium-config:/config
+      # Shared download directory so files the agent fetches are reachable
+      # from the Hermes side without a second copy.
+      - /var/lib/homelab/hermes/data/downloads:/config/Downloads
+
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9222/json/version >/dev/null 2>&1 || exit 1"]
+      # Ask CDP itself, not the web UI: this is the endpoint Hermes depends
+      # on, and it answers only once Chromium is actually up.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9222/json/version >/dev/null || exit 1"]
       interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+      timeout: 10s
+      retries: 4
+      start_period: 45s
