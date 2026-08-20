@@ -53,6 +53,11 @@
     "d /var/lib/homelab/hermes 0700 root root -"
     "d /var/lib/homelab/hermes/data 0700 root root -"
     "d /var/lib/homelab/hermes/data/downloads 0755 root root -"
+    # HOME inside the container is /opt/data. The target intentionally does
+    # not exist on the host; it resolves inside the container's image.
+    "d /var/lib/homelab/hermes/data/.local 0700 10000 10000 -"
+    "d /var/lib/homelab/hermes/data/.local/bin 0755 10000 10000 -"
+    "L+ /var/lib/homelab/hermes/data/.local/bin/hermes - - - - /opt/hermes/.venv/bin/hermes"
     "d /var/lib/homelab/hermes/chromium-config 0700 root root -"
   ];
 
@@ -93,6 +98,17 @@
 
     hermes = (composeService "hermes" ../../services/hermes/docker-compose.yml) // {
       after = [ "docker.service" "network-online.target" "hermes-chromium.service" ];
+
+      # Docker's env_file injects provider keys into the process, but Hermes
+      # doctor/setup intentionally inspect $HERMES_HOME/.env. Mirror the same
+      # SOPS secret into the persisted HOME before every start so runtime and
+      # diagnostics share one source of truth. Never rely on `hermes setup` to
+      # mutate this file: the encrypted secret remains authoritative.
+      preStart = ''
+        ${pkgs.coreutils}/bin/install -o 10000 -g 10000 -m 0600 \
+          /run/secrets/hermes/env \
+          /var/lib/homelab/hermes/data/.env
+      '';
 
       # Two preconditions, both of which produce a silent restart loop when
       # unmet rather than a useful error:

@@ -39,7 +39,30 @@
 # human can watch. Live observation is why hermes-chromium exists separately.
 services:
   hermes:
-    image: nousresearch/hermes-agent:v2026.8.3
+    # The stable v2026.8.3 image ships seven high-severity npm advisories.
+    # Upstream main removed the root/agent-browser advisory but its lockfile
+    # still pins two build-only copies of nanoid 3.3.17 (GHSA-2v37-7h3g-55p8).
+    #
+    # Pin the tested upstream amd64 digest, then apply the smallest possible
+    # lockfile bump. `npm audit fix` is deliberately not used: npm's arborist
+    # crashes or expands the vulnerable workspace tree on this monorepo.
+    # Verified against this exact build on 2026-08-20:
+    #   npm audit --workspaces=false  -> 0
+    #   npm audit --workspace web     -> 0
+    #   npm audit --workspace ui-tui  -> 0
+    #   npm run build --workspace web -> pass
+    #   npm run build --workspace ui-tui -> pass
+    image: homelab/hermes-agent:2026-08-20-nanoid-3.3.18
+    build:
+      dockerfile_inline: |
+        FROM nousresearch/hermes-agent@sha256:76401214cc3771504c62a59932a40d21cd22bb4953ea4b00758b5742180dbf97
+        WORKDIR /opt/hermes
+        RUN sed -i \
+              -e 's#3.3.17#3.3.18#g' \
+              -e 's#nanoid/-/nanoid-3.3.17.tgz#nanoid/-/nanoid-3.3.18.tgz#g' \
+              -e 's#sha512-xQLf0A3HOMlgHq0n247/LRuAOYmB7dXJ/DvAxGvsSBij45XtBSmQycu+F8ODbHwns/XyFZagyL1+J0Offw1E0g==#sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==#g' \
+              package-lock.json \
+            && npm ci --ignore-scripts --no-audit --no-fund
     container_name: hermes
     restart: unless-stopped
 
@@ -67,6 +90,11 @@ services:
       - /run/secrets/hermes/whatsapp-cloud-env
 
     environment:
+      # HOME is /opt/data for the runtime user. Keep its user-local bin first
+      # so both interactive shells and subprocesses resolve the declaratively
+      # managed hermes symlink below.
+      PATH: "/opt/data/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"
+
       # Point the browser toolset at the sibling container's CDP endpoint
       # rather than the bundled headless shell, so sessions are observable.
       #
