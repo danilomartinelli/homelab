@@ -8,11 +8,12 @@
     ./cloud-init.nix
     ./networking.nix
     ./docker.nix
+    ./uncloud.nix
     ./tailscale.nix
-    # Caddy is what opens 80/443 to the internet. It exists solely to
-    # terminate TLS for the WhatsApp Cloud API webhook, which Meta POSTs to
-    # from its own infrastructure and therefore cannot reach over Tailscale.
-    ./caddy.nix
+    # Public ingress is provided by the Caddy service managed by Uncloud.
+    # This module declares only the host firewall boundary; the Caddy service
+    # and its global config live in Uncloud's replicated cluster state.
+    ./ingress.nix
     # secrets.nix must come before anything that reads
     # config.sops.secrets.*, and requires secrets/services.yaml to exist and
     # be decryptable by kodo's host key — otherwise activation fails.

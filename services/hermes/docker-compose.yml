@@ -115,12 +115,11 @@ services:
       # DEFAULT_WEBHOOK_PORT = 8090, DEFAULT_WEBHOOK_PATH =
       # "/whatsapp/webhook", DEFAULT_WEBHOOK_HOST = None.
       #
-      # HOST is pinned to loopback on purpose. The default of None makes
-      # aiohttp bind every interface (IPv4 + IPv6), and with
-      # network_mode: host that would publish 8090 straight to the internet,
-      # bypassing Caddy, TLS, and the single-path restriction. Caddy is the
-      # only thing that should listen publicly.
-      WHATSAPP_CLOUD_WEBHOOK_HOST: "127.0.0.1"
+      # HOST is pinned to the gateway of kodo's Uncloud bridge. The
+      # Uncloud-managed Caddy container reaches the host at 10.210.0.1, but
+      # the webhook is not bound to the public or Tailscale interfaces. The
+      # default of None would bind every interface and expose 8090 directly.
+      WHATSAPP_CLOUD_WEBHOOK_HOST: "10.210.0.1"
       WHATSAPP_CLOUD_WEBHOOK_PORT: "8090"
       WHATSAPP_CLOUD_WEBHOOK_PATH: "/whatsapp/webhook"
 

@@ -1,0 +1,34 @@
+{
+	# Let's Encrypt contact for expiry and account notifications.
+	email danilomartinelli429@gmail.com
+}
+
+# Existing WhatsApp Cloud API webhook preserved while public ingress moves
+# from the NixOS Caddy unit to Uncloud's global Caddy service.
+hermes.witek.sh {
+	handle /whatsapp/webhook* {
+		reverse_proxy 10.210.0.1:8090 {
+			# Meta retries on 5xx. The gateway acknowledges before processing,
+			# but retain the previous tolerance for a slow response.
+			transport http {
+				read_timeout 30s
+			}
+		}
+	}
+
+	handle {
+		respond 404
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Container logs stay on stdout and inherit Docker's rotation policy.
+	# Request bodies are not included by Caddy's standard JSON access log.
+	log {
+		format json
+	}
+}

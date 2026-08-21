@@ -19,10 +19,12 @@ homelab/
 │   ├── users.nix                   # admin + root keys, SSH daemon
 │   ├── cloud-init.nix              # Provider boot integration — mandatory
 │   ├── networking.nix              # Firewall only; addressing belongs to cloud-init
-│   ├── docker.nix                  # (not yet enabled)
-│   ├── tailscale.nix               # (not yet enabled)
-│   ├── secrets.nix                 # (not yet enabled)
-│   └── backup.nix                  # (not yet enabled)
+│   ├── docker.nix                  # Docker daemon and Compose
+│   ├── uncloud.nix                 # Pinned uncloudd daemon and systemd unit
+│   ├── ingress.nix                 # Public ports for Uncloud Caddy
+│   ├── tailscale.nix               # Private administration network
+│   ├── secrets.nix                 # SOPS materialisation
+│   └── backup.nix                  # Restic backup policy
 ├── scripts/
 │   ├── deploy.sh                   # Apply the flake to the remote host
 │   └── healthcheck.sh              # Disk / services / backup status
@@ -119,3 +121,43 @@ same diff-and-verify sequence above.
 
 Enable one module at a time. A boot failure with one change has one
 candidate cause; with four changes it has four.
+
+## Uncloud
+
+`kodo` is the first member of the `loopdodia` cluster. Both the local `uc`
+client and the remote daemon are pinned to `v0.20.0`; they must be upgraded
+together. The client connects as `admin@kodo.witek.sh` using
+`~/.ssh/id_ed25519`. Only the public key is declared in `modules/users.nix`.
+
+The cluster uses these fixed network values:
+
+| Purpose | Value |
+|---|---|
+| Machine/service network | `10.210.0.0/16` |
+| `kodo` subnet | `10.210.0.0/24` |
+| Host gateway from Uncloud containers | `10.210.0.1` |
+| Public ingress | `187.77.229.230` |
+| WireGuard endpoint | `187.77.229.230:51820/udp` |
+| Reserved Uncloud domain | `*.7a57lb.uncld.dev` |
+
+Uncloud's global Caddy service owns `80/tcp`, `443/tcp` and `443/udp`.
+Its custom config is versioned at `services/uncloud/Caddyfile` and preserves
+the `hermes.witek.sh/whatsapp/webhook` route. Reapply it after intentional
+changes with:
+
+```sh
+uc caddy deploy -c loopdodia \
+  --image caddy:2.10.2 \
+  --caddyfile services/uncloud/Caddyfile
+```
+
+For `loopdodia.dev`, point both the apex and wildcard at the public IPv4:
+
+```text
+loopdodia.dev    A  187.77.229.230
+*.loopdodia.dev  A  187.77.229.230
+```
+
+Uncloud will then route a hostname only after a deployed service declares
+that hostname as an HTTP/HTTPS ingress endpoint. DNS alone does not expose a
+container.

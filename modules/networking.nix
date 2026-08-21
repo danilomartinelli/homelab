@@ -21,7 +21,11 @@
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [ 22 ];
-    allowedUDPPorts = [ 41641 ]; # Tailscale
+    allowedUDPPorts = [
+      443   # HTTP/3 for the Uncloud-managed Caddy ingress
+      51820 # Uncloud WireGuard mesh
+      41641 # Tailscale
+    ];
     trustedInterfaces = [ "tailscale0" ];
   };
 }

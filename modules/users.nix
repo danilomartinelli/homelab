@@ -16,20 +16,36 @@
 
 { config, pkgs, lib, ... }:
 let
-  adminKeys = [
+  recoveryKeys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPV/mHijDsESTCFDzWYl6dIx+HtICCMllFlfRFSUWxIv danilomartinelli personal"
+  ];
+  uncloudAccessKeys = [
+    # Public half of ~/.ssh/id_ed25519 on the management Mac. The private
+    # key never leaves that machine; uc stores only this key's local path in
+    # its client context and connects as the unprivileged admin user.
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPqYTfOwfG/QbCPYjEXjx7lMmDclx+uyj4x8YLutzpEd homelab-MacBook-Pro-de-Danilo"
   ];
 in
 {
-  users.users.root.openssh.authorizedKeys.keys = adminKeys;
+  # Keep the recovery key set deliberately smaller. Uncloud administration
+  # uses admin + passwordless sudo and does not need direct root login.
+  users.users.root.openssh.authorizedKeys.keys = recoveryKeys;
+
+  # uncloudd exposes its local control socket as root:uncloud 0660.
+  users.groups.uncloud = { };
+  users.users.uncloud = {
+    isSystemUser = true;
+    group = "uncloud";
+    home = "/var/lib/uncloud";
+  };
 
   # "docker" is listed only because modules/docker.nix is enabled; the group
   # is created by that module. Adding it here while docker is disabled makes
   # activation fail on a nonexistent group.
   users.users.admin = {
     isNormalUser = true;
-    extraGroups = [ "wheel" "docker" ];
-    openssh.authorizedKeys.keys = adminKeys;
+    extraGroups = [ "wheel" "docker" "uncloud" ];
+    openssh.authorizedKeys.keys = recoveryKeys ++ uncloudAccessKeys;
   };
 
   # Reachable only by SSH key, so passwordless sudo is an acceptable trade.
