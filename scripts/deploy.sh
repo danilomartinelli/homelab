@@ -62,7 +62,11 @@ log "Activating the candidate without changing the boot default"
 "${SSH[@]}" "$REMOTE" 'cd /etc/homelab && sudo nixos-rebuild test --flake .#kodo'
 
 log "Verifying SSH from a new connection"
-"${SSH[@]}" "$REMOTE" 'sudo systemctl is-active sshd docker uncloudd'
+"${SSH[@]}" "$REMOTE" 'set -e
+  for unit in sshd docker uncloud; do
+    sudo systemctl is-active --quiet "$unit"
+  done
+'
 
 log "Setting the tested generation as the boot default"
 "${SSH[@]}" "$REMOTE" 'cd /etc/homelab && sudo nixos-rebuild boot --flake .#kodo'
@@ -92,11 +96,18 @@ done
 
 log "Running post-reboot health checks"
 "${SSH[@]}" "$REMOTE" 'set -euo pipefail
-  sudo systemctl is-active sshd docker uncloudd hermes-chromium hermes
-  for _ in $(seq 1 36); do
-    health=$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}" hermes)
-    [ "$health" = healthy ] && break
+  health=unknown
+  for _ in $(seq 1 60); do
+    units_ready=true
+    for unit in sshd docker uncloud hermes-chromium hermes; do
+      sudo systemctl is-active --quiet "$unit" || units_ready=false
+    done
+    health=$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}" hermes 2>/dev/null || true)
+    [ "$units_ready" = true ] && [ "$health" = healthy ] && break
     sleep 5
+  done
+  for unit in sshd docker uncloud hermes-chromium hermes; do
+    sudo systemctl is-active --quiet "$unit"
   done
   test "$health" = healthy
   sudo docker inspect --format "hermes={{.State.Status}}/{{.State.Health.Status}}" hermes
