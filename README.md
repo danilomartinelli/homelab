@@ -154,9 +154,12 @@ includes `faster-whisper`; this prevents silent cloud fallback. The retired
 ## Uncloud
 
 `kodo` is the first member of the `loopdodia` cluster. Both the local `uc`
-client and the remote daemon are pinned to `v0.20.0`; they must be upgraded
-together. The client connects as `admin@kodo.witek.sh` using
-`~/.ssh/id_ed25519`. Only the public key is declared in `modules/users.nix`.
+client and the server's `uc`/`uncloudd` binaries are pinned to `v0.20.0`;
+they must be upgraded together. The client on the Mac connects as
+`admin@kodo.witek.sh` using `~/.ssh/id_ed25519`. Only the public key is
+declared in `modules/users.nix`. When run by `admin` on kodo, `uc` uses the
+local `/run/uncloud/uncloud.sock` through the declarative `loopdodia`
+context, so no private SSH key is stored on the server.
 
 The cluster uses these fixed network values:
 
@@ -168,6 +171,11 @@ The cluster uses these fixed network values:
 | Public ingress | `187.77.229.230` |
 | WireGuard endpoint | `187.77.229.230:51820/udp` |
 | Reserved Uncloud domain | `*.7a57lb.uncld.dev` |
+
+`uc dns reserve` reserves only the optional Uncloud-managed
+`<cluster-id>.uncld.dev` domain. It does not register or manage
+`loopdodia.dev`; custom domains remain in their authoritative DNS provider
+and must also be declared as ingress endpoints for the destination service.
 
 Uncloud's global Caddy service owns `80/tcp`, `443/tcp` and `443/udp`.
 Its custom config is versioned at `services/uncloud/Caddyfile` and preserves
