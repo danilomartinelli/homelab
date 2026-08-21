@@ -70,7 +70,18 @@ log "Setting the tested generation as the boot default"
 log "Rebooting $HOST"
 "${SSH[@]}" "$REMOTE" 'sudo systemctl reboot' || true
 
-log "Waiting for a fresh SSH connection"
+log "Waiting for the old SSH endpoint to stop"
+went_down=false
+for _ in $(seq 1 30); do
+  if ! "${SSH[@]}" "$REMOTE" true 2>/dev/null; then
+    went_down=true
+    break
+  fi
+  sleep 2
+done
+test "$went_down" = true || die "host never became unreachable; reboot was not proven"
+
+log "Waiting for a fresh SSH connection after reboot"
 for _ in $(seq 1 60); do
   if "${SSH[@]}" "$REMOTE" true 2>/dev/null; then
     break
@@ -82,7 +93,15 @@ done
 log "Running post-reboot health checks"
 "${SSH[@]}" "$REMOTE" 'set -euo pipefail
   sudo systemctl is-active sshd docker uncloudd hermes-chromium hermes
-  sudo docker inspect --format "hermes={{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}" hermes
+  for _ in $(seq 1 36); do
+    health=$(sudo docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}" hermes)
+    [ "$health" = healthy ] && break
+    sleep 5
+  done
+  test "$health" = healthy
+  sudo docker inspect --format "hermes={{.State.Status}}/{{.State.Health.Status}}" hermes
+  test "$(sudo docker exec hermes hermes config get stt.provider)" = local
+  test "$(sudo docker exec hermes hermes config get stt.language)" = pt
   test "$(sudo git -C /etc/homelab rev-parse HEAD)" = "$(sudo git -C /etc/homelab rev-parse origin/main)"
   printf "generation=%s\n" "$(readlink /run/current-system)"
 '
