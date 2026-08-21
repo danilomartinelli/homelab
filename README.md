@@ -172,6 +172,12 @@ The cluster uses these fixed network values:
 | WireGuard endpoint | `187.77.229.230:51820/udp` |
 | Reserved Uncloud domain | `*.7a57lb.uncld.dev` |
 
+Uncloud containers use the machine gateway (`10.210.0.1`) as their DNS
+server. The host firewall therefore permits TCP and UDP port 53 only on
+Docker's user-defined bridge interfaces (`br-*`). Do not replace the
+container DNS with a public resolver: doing so would make public names work
+but break Uncloud service discovery through `*.internal`.
+
 `uc dns reserve` reserves only the optional Uncloud-managed
 `<cluster-id>.uncld.dev` domain. It does not register or manage
 `loopdodia.dev`; custom domains remain in their authoritative DNS provider

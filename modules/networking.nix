@@ -27,5 +27,16 @@
       41641 # Tailscale
     ];
     trustedInterfaces = [ "tailscale0" ];
+
+    # Uncloud runs its authoritative/forwarding DNS listener on each machine's
+    # service-network gateway (10.210.0.1 on kodo). Containers are configured
+    # to query that address so both public names and Uncloud's *.internal names
+    # resolve. Docker gives user-defined bridges dynamic br-<id> names; the
+    # iptables `+` suffix matches all of those bridges without exposing DNS on
+    # the host's public interface.
+    interfaces."br-+" = {
+      allowedTCPPorts = [ 53 ];
+      allowedUDPPorts = [ 53 ];
+    };
   };
 }
