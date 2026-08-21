@@ -58,8 +58,17 @@
     "d /var/lib/homelab/hermes/data/.local 0700 10000 10000 -"
     "d /var/lib/homelab/hermes/data/.local/bin 0755 10000 10000 -"
     "L+ /var/lib/homelab/hermes/data/.local/bin/hermes - - - - /opt/hermes/.venv/bin/hermes"
+    "d /var/lib/homelab/hermes/retired-plugins 0700 root root -"
     "d /var/lib/homelab/hermes/chromium-config 0700 root root -"
   ];
+
+  # Hermes' native managed scope is a deep overlay over the mutable user
+  # config in /opt/data. This keeps server policy declarative without putting
+  # OAuth tokens, pairings, sessions, memories or personal channel IDs in Git.
+  environment.etc."hermes/config.yaml" = {
+    source = ../../services/hermes/config.yaml;
+    mode = "0644";
+  };
 
   # Compose stacks are referenced straight out of the Nix store rather than
   # copied to /var/lib. The store path changes when the file changes, so
@@ -108,6 +117,16 @@
         ${pkgs.coreutils}/bin/install -o 10000 -g 10000 -m 0600 \
           /run/secrets/hermes/env \
           /var/lib/homelab/hermes/data/.env
+
+        # The old local adapter duplicates the native gateway STT path. Move
+        # it out of the plugin discovery directory, preserving a recoverable
+        # copy under the restic-backed Hermes data root.
+        if [ -d /var/lib/homelab/hermes/data/plugins/whatsapp_stt ]; then
+          retired="/var/lib/homelab/hermes/retired-plugins/whatsapp_stt-$(${pkgs.coreutils}/bin/date +%Y%m%dT%H%M%S)"
+          ${pkgs.coreutils}/bin/mv \
+            /var/lib/homelab/hermes/data/plugins/whatsapp_stt \
+            "$retired"
+        fi
       '';
 
       # Two preconditions, both of which produce a silent restart loop when

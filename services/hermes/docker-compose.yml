@@ -52,7 +52,7 @@ services:
     #   npm audit --workspace ui-tui  -> 0
     #   npm run build --workspace web -> pass
     #   npm run build --workspace ui-tui -> pass
-    image: homelab/hermes-agent:2026-08-20-nanoid-3.3.18
+    image: homelab/hermes-agent:2026-08-21-stt
     build:
       dockerfile_inline: |
         FROM nousresearch/hermes-agent@sha256:76401214cc3771504c62a59932a40d21cd22bb4953ea4b00758b5742180dbf97
@@ -62,7 +62,10 @@ services:
               -e 's#nanoid/-/nanoid-3.3.17.tgz#nanoid/-/nanoid-3.3.18.tgz#g' \
               -e 's#sha512-xQLf0A3HOMlgHq0n247/LRuAOYmB7dXJ/DvAxGvsSBij45XtBSmQycu+F8ODbHwns/XyFZagyL1+J0Offw1E0g==#sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==#g' \
               package-lock.json \
-            && npm ci --ignore-scripts --no-audit --no-fund
+            && npm ci --ignore-scripts --no-audit --no-fund \
+            && uv pip install --python /opt/hermes/.venv/bin/python \
+              "faster-whisper==1.2.1" \
+              "ctranslate2==4.8.1"
     container_name: hermes
     restart: unless-stopped
 
@@ -123,33 +126,20 @@ services:
       WHATSAPP_CLOUD_WEBHOOK_PORT: "8090"
       WHATSAPP_CLOUD_WEBHOOK_PATH: "/whatsapp/webhook"
 
-      # Packages installed into the persisted volume rather than the image.
-      #
-      # The image sets HERMES_LAZY_INSTALL_TARGET=/opt/data/lazy-packages but
-      # does NOT add it to PYTHONPATH, so anything installed there is invisible
-      # to the interpreter. Verified: `import faster_whisper` failed with
-      # ModuleNotFoundError until PYTHONPATH was set explicitly, then resolved
-      # to 1.2.1.
-      #
-      # This matters because /opt/hermes/.venv lives in the image layer, so a
-      # package installed there is lost whenever the container is recreated
-      # — which happens on every `docker compose up` after a config change.
-      # /opt/data is the bind mount, so installs there survive.
-      #
-      # Currently carries faster-whisper, which backs the `stt` toolset
-      # (local transcription, no API key).
-      PYTHONPATH: "/opt/data/lazy-packages"
-
     volumes:
       # The image's declared volume. Holds config.yaml, auth.json (Codex
       # OAuth), sessions, memories, skills, and the Baileys WhatsApp session
       # — everything that must survive replacing the container.
       - /var/lib/homelab/hermes/data:/opt/data
 
+      # Read-only server policy, materialised by Nix from the tracked config.
+      # Hermes deep-merges it over /opt/data/config.yaml at runtime.
+      - /etc/hermes:/etc/hermes:ro
+
     healthcheck:
       # Test the thing that actually matters: the gateway process is alive.
       # Anything that merely invokes the CLI passes even mid-restart-loop.
-      test: ["CMD-SHELL", "pgrep -f 'gateway run' >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "pgrep -f 'gateway run' >/dev/null && /opt/hermes/.venv/bin/python -c 'import faster_whisper' || exit 1"]
       interval: 60s
       timeout: 10s
       retries: 3

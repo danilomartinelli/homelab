@@ -1,0 +1,48 @@
+# Server-owned Hermes policy. Hermes deep-merges this file over the mutable
+# /opt/data/config.yaml and makes these leaves read-only in setup/dashboard.
+# User state (OAuth, sessions, memories and pairings) stays under /opt/data.
+
+model:
+  provider: opencode-go
+  default: minimax-m3
+
+stt:
+  enabled: true
+  provider: local
+  echo_transcripts: true
+  language: pt
+  local:
+    model: base
+    language: pt
+    device: cpu
+    compute_type: int8
+    vad: true
+    vad_min_silence_ms: 500
+    no_speech_prob_threshold: 0.6
+    logprob_threshold: -1.0
+    unload_after_idle_seconds: 0
+
+mcp_servers:
+  context7:
+    enabled: true
+    command: npx
+    args:
+      - -y
+      - "@upstash/context7-mcp"
+    env:
+      CONTEXT7_API_KEY: "${CONTEXT7_API_KEY}"
+
+platforms:
+  whatsapp_cloud:
+    enabled: true
+
+# This custom adapter pre-transcribed WhatsApp audio before Hermes' native
+# gateway processed the same media. Keep it disabled so each audio is handled
+# once by the upstream STT pipeline (which includes VAD and deduplication).
+plugins:
+  disabled:
+    - whatsapp-stt
+
+telemetry:
+  shared_metrics:
+    enabled: false

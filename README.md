@@ -11,7 +11,8 @@ boot, NixOS 26.05. Reachable at `kodo.witek.sh`.
 
 ```text
 homelab/
-├── flake.nix                       # NixOS 26.05, currently pinned (see below)
+├── flake.nix                       # NixOS 26.05 inputs
+├── flake.lock                      # Exact production input revisions
 ├── hosts/kodo/
 │   ├── default.nix                 # Host facts: bootloader, kernel params, hostname
 │   └── hardware-configuration.nix  # Transcribed from the image, not regenerated
@@ -26,19 +27,26 @@ homelab/
 │   ├── secrets.nix                 # SOPS materialisation
 │   └── backup.nix                  # Restic backup policy
 ├── scripts/
-│   ├── deploy.sh                   # Apply the flake to the remote host
+│   ├── deploy.sh                   # Safe main -> test -> boot -> reboot deploy
 │   └── healthcheck.sh              # Disk / services / backup status
+├── services/hermes/
+│   ├── config.yaml                 # Read-only managed Hermes policy
+│   └── docker-compose.yml          # Pinned image and gateway runtime
 └── .sops.yaml                      # age recipients for secrets/
 ```
 
 ## Deploying
 
 ```sh
-scripts/deploy.sh kodo
+scripts/deploy.sh kodo.witek.sh
 ```
 
-That runs `nixos-rebuild switch` on the host over SSH. Read the next
-section before trusting it.
+The script requires a clean local `main` equal to `origin/main` and a clean
+Git checkout at `/etc/homelab`. It fast-forwards the server, builds and diffs
+the closure, activates it with `test`, verifies a fresh SSH connection, sets
+the boot generation, reboots, and checks the core services after the host
+returns. It uses `~/.ssh/id_ed25519` by default; override that with
+`HOMELAB_SSH_KEY`.
 
 ## The rule that matters
 
@@ -102,25 +110,46 @@ provider panel — no console needed.
 | BIOS boot, no ESP | GRUB on the MBR of `/dev/sda`; systemd-boot is not available |
 | Serial console on `ttyS0` | `boot.kernelParams` must keep `console=ttyS0,115200`, or a failed boot shows a blank screen |
 
-## Pinned nixpkgs
+## Pinned inputs
 
-`flake.nix` currently pins nixpkgs to `21ea275a7c46`, the revision the
-provider image ships. The pin was added to remove the kernel from the set
-of variables while the deploy pipeline was being proven — it makes the
-built kernel byte-identical to the one already known to boot.
+`flake.lock` is committed and is the exact dependency set evaluated in
+production. `flake.nix` follows the NixOS 26.05 release branch, but inputs
+only move when the lockfile is intentionally updated and reviewed.
 
-The pin is a debugging aid, not a permanent state: it also freezes security
-updates. Unpin it back to `github:NixOS/nixpkgs/nixos-26.05` and run the
-same diff-and-verify sequence above.
+Run `nix flake update` deliberately and use the full diff-and-verify sequence
+above, because an input update can change the kernel and systemd closure.
 
 ## Adding a service
 
-1. Write the compose stack under `/var/lib/homelab/<name>/` on the host
+1. Write the compose stack under `services/<name>/` in this repository
 2. Add a systemd unit entry in `hosts/kodo/default.nix`
 3. Deploy, then verify with an actual reboot
 
 Enable one module at a time. A boot failure with one change has one
 candidate cause; with four changes it has four.
+
+## Hermes state boundary
+
+Hermes uses two configuration layers:
+
+- `services/hermes/config.yaml` is the Git-managed, read-only server policy.
+  Nix materialises it as `/etc/hermes/config.yaml`, and Hermes deep-merges it
+  over the user configuration.
+- `/var/lib/homelab/hermes/data` is mutable runtime state mounted at
+  `/opt/data`. It holds OAuth, pairings, sessions, memories, personal channel
+  IDs, downloaded models and user preferences. It is covered by restic, not
+  committed to Git.
+
+Provider keys and WhatsApp credentials remain SOPS-encrypted in
+`secrets/services.yaml`; activation materialises them below `/run/secrets`.
+The repository must never contain the decrypted `.env`, `auth.json`, session
+databases or pairing files.
+
+Audio transcription is handled once by Hermes' native STT pipeline. The
+managed policy pins local CPU/int8 transcription in Portuguese and the image
+includes `faster-whisper`; this prevents silent cloud fallback. The retired
+`whatsapp-stt` adapter is disabled and moved to the restic-backed
+`retired-plugins` directory rather than deleted.
 
 ## Uncloud
 
