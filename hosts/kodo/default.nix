@@ -43,8 +43,8 @@
   # It has to be created declaratively: restic skips a nonexistent path
   # SILENTLY — no warning, no non-zero exit. The first backup run looked
   # successful while covering only /etc, which is the failure mode a backup
-  # must never have. Verify coverage with `restic snapshots` and check the
-  # Paths column, not just the exit status.
+  # must never have. `kodo-backup-verify` checks every path declared by the
+  # backup module instead of relying on a successful exit status alone.
   systemd.tmpfiles.rules = [
     "d /var/lib/homelab 0750 root root -"
     # Hermes state. /opt/data inside the container maps here, so it holds

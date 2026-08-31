@@ -37,19 +37,9 @@ ssh -T -i "$SSH_KEY" -o IdentitiesOnly=yes -o ControlPath=none -o ConnectTimeout
     failed=1
   fi
 
-  printf '› Latest restic snapshot\n'
-  if snapshots=$(sudo kodo-restic snapshots --json --no-cache) \
-    && latest=$(printf '%s' "$snapshots" | jq -c 'max_by(.time)') \
-    && [ "$latest" != null ]; then
-    printf '%s\n' "$latest" | jq -r '"  \(.time) host=\(.hostname) paths=\(.paths | join(","))"'
-    for path in /etc /var/lib/homelab; do
-      if ! printf '%s\n' "$latest" | jq -e --arg path "$path" '.paths | index($path)' >/dev/null; then
-        printf '  ✗ latest snapshot does not cover %s\n' "$path" >&2
-        failed=1
-      fi
-    done
-  else
-    printf '  ✗ backup repository unavailable\n' >&2
+  printf '› Backup coverage\n'
+  if ! sudo kodo-backup-verify; then
+    printf '  ✗ backup coverage verification failed\n' >&2
     failed=1
   fi
 
