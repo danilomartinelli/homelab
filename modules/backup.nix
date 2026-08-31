@@ -16,6 +16,86 @@
 # is not a backup.
 
 { config, pkgs, lib, ... }:
+let
+  backupPaths = [
+    "/var/lib/homelab"
+    "/etc"
+  ];
+
+  backupPathShellArray = lib.concatMapStringsSep "\n"
+    (path: "  ${lib.escapeShellArg path}")
+    backupPaths;
+  backupPathsJson = lib.escapeShellArg (builtins.toJSON backupPaths);
+
+  kodoRestic = pkgs.writeShellScriptBin "kodo-restic" ''
+    set -euo pipefail
+
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "kodo-restic: must run as root (secrets are root-only)" >&2
+      exit 1
+    fi
+
+    RESTIC_REPOSITORY="$(cat ${config.sops.secrets."restic/repository".path})"
+    export RESTIC_REPOSITORY
+    export RESTIC_PASSWORD_FILE=${config.sops.secrets."restic/password".path}
+
+    # r2-env is a systemd EnvironmentFile: plain KEY=VALUE lines.
+    set -a
+    # shellcheck disable=SC1091
+    . ${config.sops.secrets."restic/r2-env".path}
+    set +a
+
+    exec ${pkgs.restic}/bin/restic "$@"
+  '';
+
+  kodoBackupVerify = pkgs.writeShellScriptBin "kodo-backup-verify" ''
+    set -euo pipefail
+
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "kodo-backup-verify: must run as root (secrets are root-only)" >&2
+      exit 1
+    fi
+
+    if [ "$#" -ne 0 ]; then
+      echo "kodo-backup-verify: takes no arguments" >&2
+      exit 2
+    fi
+
+    declared_paths=(
+${backupPathShellArray}
+    )
+
+    latest_time="$(${kodoRestic}/bin/kodo-restic snapshots --json --no-cache |
+      ${pkgs.jq}/bin/jq -e -r --argjson expected_paths ${backupPathsJson} '
+        if type != "array" then
+          error("restic snapshots did not return an array")
+        elif length == 0 then
+          error("restic repository contains no snapshots")
+        else
+          max_by(.time) as $latest |
+          if ($latest.time | type) != "string" or ($latest.paths | type) != "array" then
+            error("latest restic snapshot lacks time or paths")
+          elif any($latest.paths[]; type != "string") then
+            error("latest restic snapshot contains an invalid path")
+          else
+            ($expected_paths - $latest.paths) as $missing |
+            if ($missing | length) > 0 then
+              error("latest restic snapshot does not cover: " + ($missing | join(", ")))
+            else
+              $latest.time
+            end
+          end
+        end
+      ')"
+    echo "Latest restic snapshot: $latest_time"
+
+    for expected_path in "''${declared_paths[@]}"; do
+      echo "  covered: $expected_path"
+    done
+
+    echo "Backup coverage verified."
+  '';
+in
 {
   services.restic.backups.kodo = {
     initialize = true;
@@ -24,10 +104,7 @@
     passwordFile = config.sops.secrets."restic/password".path;
     environmentFile = config.sops.secrets."restic/r2-env".path;
 
-    paths = [
-      "/var/lib/homelab"
-      "/etc"
-    ];
+    paths = backupPaths;
 
     exclude = [
       "/var/lib/homelab/**/.cache"
@@ -59,34 +136,17 @@
   # it fails with "Please specify repository location". That friction is a
   # real hazard — a backup nobody inspects is a hypothesis, not a backup.
   # `kodo-restic` loads the same secrets the timer uses and forwards its
-  # arguments, so checking coverage is one command:
+  # arguments. `kodo-backup-verify` uses the declared paths above to check the
+  # latest snapshot, so checking coverage is one command:
   #
-  #   kodo-restic snapshots      # verify the Paths column, not just exit 0
+  #   kodo-backup-verify # verify every declared path in the latest snapshot
   #   kodo-restic check          # verify repository integrity
   #   kodo-restic restore latest --target /tmp/restore-test
   #
   # Requires root: the secrets under /run/secrets are mode 0400 root-owned.
   environment.systemPackages = [
     pkgs.restic
-    (pkgs.writeShellScriptBin "kodo-restic" ''
-      set -euo pipefail
-
-      if [ "$(id -u)" -ne 0 ]; then
-        echo "kodo-restic: must run as root (secrets are root-only)" >&2
-        exit 1
-      fi
-
-      RESTIC_REPOSITORY="$(cat ${config.sops.secrets."restic/repository".path})"
-      export RESTIC_REPOSITORY
-      export RESTIC_PASSWORD_FILE=${config.sops.secrets."restic/password".path}
-
-      # r2-env is a systemd EnvironmentFile: plain KEY=VALUE lines.
-      set -a
-      # shellcheck disable=SC1091
-      . ${config.sops.secrets."restic/r2-env".path}
-      set +a
-
-      exec ${pkgs.restic}/bin/restic "$@"
-    '')
+    kodoRestic
+    kodoBackupVerify
   ];
 }
