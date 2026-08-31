@@ -8,6 +8,7 @@
     ./cloud-init.nix
     ./networking.nix
     ./docker.nix
+    ./compose-runtime.nix
     ./uncloud.nix
     ./tailscale.nix
     # Public ingress is provided by the Caddy service managed by Uncloud.

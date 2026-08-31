@@ -43,8 +43,8 @@
   # It has to be created declaratively: restic skips a nonexistent path
   # SILENTLY — no warning, no non-zero exit. The first backup run looked
   # successful while covering only /etc, which is the failure mode a backup
-  # must never have. Verify coverage with `restic snapshots` and check the
-  # Paths column, not just the exit status.
+  # must never have. `kodo-backup-verify` checks every path declared by the
+  # backup module instead of relying on a successful exit status alone.
   systemd.tmpfiles.rules = [
     "d /var/lib/homelab 0750 root root -"
     # Hermes state. /opt/data inside the container maps here, so it holds
@@ -80,33 +80,20 @@
   # -p pins the project name: without it Compose derives one from the
   # directory, which here is a store hash that changes on every edit and
   # would orphan the previous containers.
-  systemd.services = let
-    composeService = name: file: {
-      description = "homelab ${name}";
-      after = [ "docker.service" "network-online.target" ];
-      wants = [ "network-online.target" ];
-      requires = [ "docker.service" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} up -d --remove-orphans";
-        ExecStop = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} down";
-        # Image pulls on a cold start are slow; the default 90s is not enough.
-        TimeoutStartSec = "10min";
-        TimeoutStopSec = "2min";
-      };
-    };
-  in {
+  homelab.compose.stacks = {
     # Chromium first: Hermes reads HERMES_BROWSER_CDP_URL at startup, so the
     # CDP endpoint should already be listening. This is ordering, not a hard
     # dependency — Hermes tolerates the browser being absent and only fails
     # the browser toolset.
-    hermes-chromium = composeService "hermes-chromium" ../../services/hermes-chromium/docker-compose.yml;
+    hermes-chromium = {
+      file = ../../services/hermes-chromium/docker-compose.yml;
+      projectName = "hermes-chromium";
+    };
 
-    hermes = (composeService "hermes" ../../services/hermes/docker-compose.yml) // {
-      after = [ "docker.service" "network-online.target" "hermes-chromium.service" ];
+    hermes = {
+      file = ../../services/hermes/docker-compose.yml;
+      projectName = "hermes";
+      after = [ "hermes-chromium.service" ];
 
       # Docker's env_file injects provider keys into the process, but Hermes
       # doctor/setup intentionally inspect $HERMES_HOME/.env. Mirror the same
@@ -153,7 +140,7 @@
       # failed); empty or malformed files still satisfy the condition, and
       # removing a path after startup does not continuously stop an
       # already-started unit.
-      unitConfig.ConditionPathExists = [
+      conditionPathExists = [
         "/run/secrets/hermes/env"
         "/run/secrets/hermes/whatsapp-cloud-env"
       ];

@@ -122,7 +122,8 @@ above, because an input update can change the kernel and systemd closure.
 ## Adding a service
 
 1. Write the compose stack under `services/<name>/` in this repository
-2. Add a systemd unit entry in `hosts/kodo/default.nix`
+2. Add a `homelab.compose.stacks.<name>` entry in `hosts/kodo/default.nix`,
+   including its Compose `file` and explicit `projectName`
 3. Deploy, then verify with an actual reboot
 
 Enable one module at a time. A boot failure with one change has one
