@@ -122,12 +122,12 @@
       #   /run/secrets/hermes/env — materialised by sops-nix during
       #   activation. Compose aborts on a missing env_file.
       #
-      #   /run/secrets/hermes/whatsapp-cloud-env — the seven
-      #   WHATSAPP_CLOUD_* values. `gateway run` logs "No messaging platforms
-      #   enabled" and exits 0 when no channel is configured, which Docker's
-      #   restart policy turns into the same silent loop. Gating on the
-      #   secret's existence keeps the unit inactive until WhatsApp is
-      #   actually configured.
+      #   /run/secrets/hermes/whatsapp-cloud-env — the WhatsApp Cloud provider
+      #   values and allowed-user restriction. `gateway run` logs "No messaging
+      #   platforms enabled" and exits 0 when no channel is configured, which
+      #   Docker's restart policy turns into the same silent loop. Gating on
+      #   the secret's existence keeps the unit inactive until both required
+      #   paths exist; it does not validate their contents.
       #
       # Note this replaced a condition on $HERMES_HOME/whatsapp/session,
       # which is where the *Baileys* bridge stores its QR-paired session.
@@ -135,9 +135,11 @@
       # would have blocked the unit forever — and the symptom would have
       # looked like a systemd fault rather than a stale precondition.
       #
-      # ConditionPathExists makes systemd skip the unit (inactive, not
-      # failed) instead of looping, so `systemctl status hermes` reads as a
-      # missing precondition rather than a crash.
+      # ConditionPathExists is evaluated at a systemd start attempt and checks
+      # only path existence. A missing path skips the unit (inactive, not
+      # failed); empty or malformed files still satisfy the condition, and
+      # removing a path after startup does not continuously stop an
+      # already-started unit.
       conditionPathExists = [
         "/run/secrets/hermes/env"
         "/run/secrets/hermes/whatsapp-cloud-env"
