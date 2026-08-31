@@ -145,6 +145,141 @@ Provider keys and WhatsApp credentials remain SOPS-encrypted in
 The repository must never contain the decrypted `.env`, `auth.json`, session
 databases or pairing files.
 
+## WhatsApp Cloud webhook intake
+
+The public callback and the private listener are one configuration contract.
+Keep the values below synchronized when changing the route; the callback URL
+is the value entered in Meta, while the bind and ingress settings are managed
+in this repository.
+
+| Layer | Source of truth | Required value |
+|---|---|---|
+| Provider callback URL | Meta webhook configuration | `https://hermes.witek.sh/whatsapp/webhook` |
+| Hermes listener | `services/hermes/docker-compose.yml` | `10.210.0.1:8090`, path `/whatsapp/webhook` |
+| Public ingress matcher | `services/uncloud/Caddyfile` | `handle /whatsapp/webhook*` |
+| Public ingress upstream | `services/uncloud/Caddyfile` | `10.210.0.1:8090` |
+| Host firewall permission | `modules/ingress.nix` | `networking.firewall.allowedTCPPorts` includes `8090` |
+
+The listener is intentionally bound to the Uncloud bridge gateway, not to a
+public or Tailscale interface. Caddy is the separately deployed public
+ingress. The host firewall allows the internal port so that Caddy can reach
+it; it does not replace the Caddy route or make the listener a public
+endpoint. If the listener port changes, update the Compose bind, Caddy
+upstream, and `networking.firewall.allowedTCPPorts` in `modules/ingress.nix`
+together. If the path changes, update the Compose path, Caddy matcher, and
+provider callback URL together.
+
+### Configuration ownership
+
+- **Provider credentials:** edit the encrypted `hermes.whatsapp-cloud-env`
+  value in `secrets/services.yaml` with `sops secrets/services.yaml`. It must
+  contain these keys, with no values committed here:
+
+  ```text
+  WHATSAPP_ENABLED
+  WHATSAPP_MODE
+  WHATSAPP_CLOUD_ACCESS_TOKEN
+  WHATSAPP_CLOUD_APP_ID
+  WHATSAPP_CLOUD_APP_SECRET
+  WHATSAPP_CLOUD_PHONE_NUMBER_ID
+  WHATSAPP_CLOUD_WABA_ID
+  WHATSAPP_CLOUD_VERIFY_TOKEN
+  WHATSAPP_CLOUD_ALLOWED_USERS
+  ```
+
+  `WHATSAPP_CLOUD_ALLOWED_USERS` is an authorized inbound sender/user
+  allow-list controlling which WhatsApp users may interact with Hermes; it is
+  not a recipient allow-list. Keep it restricted so unknown senders remain
+  denied, and never use an allow-all setting. Do not create or use
+  `services/.env`; the tracked generic key reference is
+  `services/.env.example`, which intentionally contains no WhatsApp secrets.
+- **Runtime bind and path:** the three
+  `WHATSAPP_CLOUD_WEBHOOK_*` settings remain non-secret Compose environment
+  settings in `services/hermes/docker-compose.yml`.
+- **Public ingress:** the hostname, path matcher and reverse-proxy upstream
+  remain in `services/uncloud/Caddyfile`. Use the synchronized port and path
+  change procedure above as one reviewable change; do not silently change
+  only one configuration surface.
+
+### Setup and operations
+
+1. Ensure authoritative DNS for `hermes.witek.sh` resolves to the public
+   ingress IPv4 `187.77.229.230`. DNS alone does not route a container; the
+   Caddy service must also have the route above deployed.
+2. Put the provider values in the separate SOPS key described above. Hermes
+   requires both `/run/secrets/hermes/env` and
+   `/run/secrets/hermes/whatsapp-cloud-env`; the first contains the general
+   Hermes environment and the second contains the WhatsApp Cloud values.
+3. Deploy the host repository with the existing guarded operation:
+
+   ```sh
+   scripts/deploy.sh kodo.witek.sh
+   ```
+
+   This is the existing NixOS host deployment and does not deploy Caddy.
+   Reapply Caddy separately when its tracked configuration changes:
+
+   ```sh
+   uc caddy deploy -c loopdodia \
+     --image caddy:2.10.2 \
+     --caddyfile services/uncloud/Caddyfile
+   ```
+
+4. In Meta, enter the canonical callback URL and use the same value as
+   `WHATSAPP_CLOUD_VERIFY_TOKEN` for the provider's verification token. Use
+   Meta's current UI to complete the webhook subscription; this repository
+   deliberately does not assert provider-specific field names.
+
+### Layered verification and diagnosis
+
+Check the static contract without exposing secret values:
+
+```sh
+git diff --check
+grep -nE 'WHATSAPP_CLOUD_WEBHOOK_|/whatsapp/webhook|10\.210\.0\.1:8090' \
+  services/hermes/docker-compose.yml services/uncloud/Caddyfile
+```
+
+On `kodo`, check prerequisites and container health separately:
+
+```sh
+sudo systemctl status hermes --no-pager
+sudo systemctl show hermes -p ActiveState -p SubState -p ConditionResult
+sudo ls -l /run/secrets/hermes/env /run/secrets/hermes/whatsapp-cloud-env
+sudo docker inspect --format '{{.State.Status}}/{{.State.Health.Status}}' hermes
+```
+
+If either secret path is absent, `ConditionPathExists` skips `hermes` at a
+systemd start attempt, leaving it inactive rather than starting a restart
+loop. It checks only path existence: empty or malformed files still satisfy
+the condition, and removing a path after startup does not continuously stop
+an already-started unit. Check both paths and the SOPS activation log before
+changing Compose or networking:
+
+```sh
+sudo journalctl -u sops-install-secrets -b --no-pager
+```
+
+An active systemd unit and a healthy Hermes container prove only local
+process/container health. They do not prove DNS, TLS, public Caddy routing,
+or Meta verification. Complete the provider's verification flow and inspect
+the existing Caddy and Hermes logs for the corresponding request; do not use
+a generic HTTP response as a substitute for provider-side verification.
+
+### Security boundaries
+
+- Use a permanent Meta System User access token, not the 24-hour dashboard
+  quickstart token.
+- `WHATSAPP_CLOUD_PHONE_NUMBER_ID` is Meta's opaque phone-number ID, not the
+  dialable telephone number.
+- Choose a verify token and keep the provider's value equal to
+  `WHATSAPP_CLOUD_VERIFY_TOKEN`; it is not a value issued by Meta.
+- Keep `WHATSAPP_CLOUD_ALLOWED_USERS` restricted to the intended digits-only
+  inbound users; unknown senders must remain denied. Never enable
+  `GATEWAY_ALLOW_ALL_USERS=true`.
+- Keep credentials in SOPS and out of the callback URL, `services/.env`, Git,
+  and diagnostic output.
+
 Audio transcription is handled once by Hermes' native STT pipeline. The
 managed policy pins local CPU/int8 transcription in Portuguese and the image
 includes `faster-whisper`; this prevents silent cloud fallback. The retired

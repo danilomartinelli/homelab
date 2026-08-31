@@ -84,12 +84,13 @@ services:
     env_file:
       # Model provider keys.
       - /run/secrets/hermes/env
-      # The seven WHATSAPP_CLOUD_* values. Split into its own secret so the
-      # systemd unit can gate on its existence: `gateway run` exits 0 when no
-      # messaging platform is configured, and Docker's restart policy turns
-      # that into a silent loop. Keeping the WhatsApp credentials in a
-      # separate file makes "is WhatsApp configured?" a filesystem question
-      # systemd can answer with ConditionPathExists.
+      # The WhatsApp Cloud provider values and allowed-user restriction. Split
+      # into its own secret so the systemd unit can gate startup on path
+      # existence:
+      # `gateway run` exits 0 when no messaging platform is configured, and
+      # Docker's restart policy turns that into a silent loop. Keeping the
+      # WhatsApp credentials in a separate file gives systemd a startup
+      # precondition; ConditionPathExists does not validate secret contents.
       - /run/secrets/hermes/whatsapp-cloud-env
 
     environment:
@@ -113,7 +114,12 @@ services:
       HERMES_BROWSER_CDP_URL: "http://127.0.0.1:9223"
       TZ: "America/Sao_Paulo"
 
-      # WhatsApp Cloud API webhook. Values read out of
+      # WhatsApp Cloud API webhook. Keep this listener contract synchronized
+      # with services/uncloud/Caddyfile and the callback URL documented in the
+      # repository README. Keep the listener port synchronized with the Caddy
+      # upstream and the firewall permission in modules/ingress.nix. These are
+      # bind settings, not provider secrets.
+      # Values read out of
       # gateway/platforms/whatsapp_cloud.py rather than guessed:
       # DEFAULT_WEBHOOK_PORT = 8090, DEFAULT_WEBHOOK_PATH =
       # "/whatsapp/webhook", DEFAULT_WEBHOOK_HOST = None.
