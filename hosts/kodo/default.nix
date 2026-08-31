@@ -80,33 +80,20 @@
   # -p pins the project name: without it Compose derives one from the
   # directory, which here is a store hash that changes on every edit and
   # would orphan the previous containers.
-  systemd.services = let
-    composeService = name: file: {
-      description = "homelab ${name}";
-      after = [ "docker.service" "network-online.target" ];
-      wants = [ "network-online.target" ];
-      requires = [ "docker.service" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} up -d --remove-orphans";
-        ExecStop = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} down";
-        # Image pulls on a cold start are slow; the default 90s is not enough.
-        TimeoutStartSec = "10min";
-        TimeoutStopSec = "2min";
-      };
-    };
-  in {
+  homelab.compose.stacks = {
     # Chromium first: Hermes reads HERMES_BROWSER_CDP_URL at startup, so the
     # CDP endpoint should already be listening. This is ordering, not a hard
     # dependency — Hermes tolerates the browser being absent and only fails
     # the browser toolset.
-    hermes-chromium = composeService "hermes-chromium" ../../services/hermes-chromium/docker-compose.yml;
+    hermes-chromium = {
+      file = ../../services/hermes-chromium/docker-compose.yml;
+      projectName = "hermes-chromium";
+    };
 
-    hermes = (composeService "hermes" ../../services/hermes/docker-compose.yml) // {
-      after = [ "docker.service" "network-online.target" "hermes-chromium.service" ];
+    hermes = {
+      file = ../../services/hermes/docker-compose.yml;
+      projectName = "hermes";
+      after = [ "hermes-chromium.service" ];
 
       # Docker's env_file injects provider keys into the process, but Hermes
       # doctor/setup intentionally inspect $HERMES_HOME/.env. Mirror the same
@@ -151,7 +138,7 @@
       # ConditionPathExists makes systemd skip the unit (inactive, not
       # failed) instead of looping, so `systemctl status hermes` reads as a
       # missing precondition rather than a crash.
-      unitConfig.ConditionPathExists = [
+      conditionPathExists = [
         "/run/secrets/hermes/env"
         "/run/secrets/hermes/whatsapp-cloud-env"
       ];
