@@ -246,16 +246,23 @@ exec)
 esac
 MOCK_DOCKER
 
-cat >"$BIN_DIR/kodo-restic" <<'MOCK_RESTIC'
+cat >"$BIN_DIR/kodo-backup-verify" <<'MOCK_BACKUP_VERIFY'
 #!/usr/bin/env bash
 set -euo pipefail
 
-printf 'kodo-restic %s\n' "$*" >>"$MOCK_HOST_COMMAND_LOG"
+[ "$#" -eq 0 ] || {
+	printf 'unexpected kodo-backup-verify arguments: %s\n' "$*" >&2
+	exit 2
+}
+printf 'kodo-backup-verify\n' >>"$MOCK_HOST_COMMAND_LOG"
 if [ "${MOCK_HOST_SCENARIO:-}" = all-health-failures ]; then
 	exit 1
 fi
-printf '[{"time":"2026-09-01T00:00:00Z","hostname":"kodo","paths":["/etc","/var/lib/homelab"]}]\n'
-MOCK_RESTIC
+printf 'Latest restic snapshot: 2026-09-01T00:00:00Z\n'
+printf '  covered: /etc\n'
+printf '  covered: /var/lib/homelab\n'
+printf 'Backup coverage verified.\n'
+MOCK_BACKUP_VERIFY
 
 cat >"$BIN_DIR/tailscale" <<'MOCK_TAILSCALE'
 #!/usr/bin/env bash
@@ -480,7 +487,7 @@ rollout_command() {
 		HOMELAB_REMOTE_CURRENT_SYSTEM="$REMOTE_CURRENT_SYSTEM" \
 		HOMELAB_REMOTE_SYSTEM_PROFILE="$REMOTE_SYSTEM_PROFILE" \
 		HOMELAB_HOST_ROLLOUT_CHECK=/fake/homelab-rollout-check \
-		HOMELAB_RESTIC_COMMAND="$BIN_DIR/kodo-restic" \
+		HOMELAB_BACKUP_VERIFY_COMMAND="$BIN_DIR/kodo-backup-verify" \
 		HOMELAB_SSH_KEY="$KEY_FILE" \
 		"$@"
 }
@@ -510,7 +517,7 @@ run_host_check() {
 		PATH="$BIN_DIR:$PATH" \
 		MOCK_HOST_COMMAND_LOG="$HOST_COMMAND_LOG" \
 		MOCK_HOST_SCENARIO="$scenario" \
-		HOMELAB_RESTIC_COMMAND="$BIN_DIR/kodo-restic" \
+		HOMELAB_BACKUP_VERIFY_COMMAND="$BIN_DIR/kodo-backup-verify" \
 		"$HOST_CHECK" --phase "$phase" >"$OUTPUT_FILE" 2>&1
 	CASE_STATUS=$?
 	set -e
@@ -613,7 +620,7 @@ run_host_check healthy test
 assert_contains "$OUTPUT_FILE" '✓ sshd'
 assert_contains "$OUTPUT_FILE" '✓ uncloud'
 assert_not_contains "$HOST_COMMAND_LOG" 'docker inspect'
-assert_not_contains "$HOST_COMMAND_LOG" 'kodo-restic'
+assert_not_contains "$HOST_COMMAND_LOG" 'kodo-backup-verify'
 assert_not_contains "$HOST_COMMAND_LOG" 'tailscale'
 
 run_host_check healthy reboot
@@ -638,18 +645,19 @@ run_rollout_healthcheck healthy
 [ "$CASE_STATUS" -eq 0 ]
 assert_contains "$OUTPUT_FILE" 'Running host health checks on kodo.witek.sh'
 assert_contains "$OUTPUT_FILE" 'Latest restic snapshot'
+assert_contains "$OUTPUT_FILE" 'Backup coverage verified.'
 assert_contains "$OUTPUT_FILE" '✓ 100.64.0.10'
 assert_contains "$HOST_COMMAND_LOG" 'systemctl is-active --quiet tailscaled'
-assert_contains "$HOST_COMMAND_LOG" 'kodo-restic snapshots --json --no-cache'
+assert_contains "$HOST_COMMAND_LOG" 'kodo-backup-verify'
 
 run_rollout_healthcheck all-health-failures
 [ "$CASE_STATUS" -ne 0 ]
 assert_contains "$OUTPUT_FILE" '✗ docker (down)'
 assert_contains "$OUTPUT_FILE" '✗ unhealthy'
-assert_contains "$OUTPUT_FILE" '✗ backup repository unavailable'
+assert_contains "$OUTPUT_FILE" '✗ declared backup coverage verification failed (exit 1)'
 assert_contains "$OUTPUT_FILE" '✗ tailscale not up'
 assert_contains "$HOST_COMMAND_LOG" 'docker inspect --format'
-assert_contains "$HOST_COMMAND_LOG" 'kodo-restic snapshots --json --no-cache'
+assert_contains "$HOST_COMMAND_LOG" 'kodo-backup-verify'
 assert_contains "$HOST_COMMAND_LOG" 'tailscale ip -4'
 
 printf 'rollout mock checks passed\n'

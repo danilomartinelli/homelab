@@ -275,13 +275,13 @@ provider callback URL together.
    requires both `/run/secrets/hermes/env` and
    `/run/secrets/hermes/whatsapp-cloud-env`; the first contains the general
    Hermes environment and the second contains the WhatsApp Cloud values.
-3. Deploy the host repository with the existing guarded operation:
+3. Deploy the host repository with the canonical guarded rollout interface:
 
    ```sh
-   scripts/deploy.sh kodo.witek.sh
+   scripts/rollout.sh deploy kodo.witek.sh
    ```
 
-   This is the existing NixOS host deployment and does not deploy Caddy.
+   This deploys the NixOS host and does not deploy Caddy.
    Reapply Caddy separately when its tracked configuration changes:
 
    ```sh

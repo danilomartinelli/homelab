@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-RESTIC_COMMAND="${HOMELAB_RESTIC_COMMAND:-/run/current-system/sw/bin/kodo-restic}"
+BACKUP_VERIFY_COMMAND="${HOMELAB_BACKUP_VERIFY_COMMAND:-/run/current-system/sw/bin/kodo-backup-verify}"
 
 usage() {
 	printf 'usage: homelab-rollout-check --phase test|reboot|healthcheck\n' >&2
@@ -18,7 +18,7 @@ die() {
 }
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
-[ -n "$RESTIC_COMMAND" ] || die "HOMELAB_RESTIC_COMMAND cannot be empty"
+[ -n "$BACKUP_VERIFY_COMMAND" ] || die "HOMELAB_BACKUP_VERIFY_COMMAND cannot be empty"
 [ "$#" -eq 2 ] && [ "$1" = --phase ] || {
 	usage
 	exit 2
@@ -104,29 +104,16 @@ check_disk() {
 }
 
 check_backup() {
-	local snapshots latest path
+	local status
 
-	printf '› Latest restic snapshot\n'
-	snapshots="$("$RESTIC_COMMAND" snapshots --json --no-cache)" || {
-		printf '  ✗ backup repository unavailable\n' >&2
-		return 1
-	}
-	latest="$(printf '%s' "$snapshots" | jq -c 'max_by(.time)')" || {
-		printf '  ✗ backup snapshot data is invalid\n' >&2
-		return 1
-	}
-	[ "$latest" != null ] || {
-		printf '  ✗ backup repository has no snapshots\n' >&2
-		return 1
-	}
-
-	printf '%s\n' "$latest" | jq -r '"  \(.time) host=\(.hostname) paths=\(.paths | join(","))"'
-	for path in /etc /var/lib/homelab; do
-		printf '%s\n' "$latest" | jq -e --arg path "$path" '.paths | index($path)' >/dev/null || {
-			printf '  ✗ latest snapshot does not cover %s\n' "$path" >&2
-			return 1
-		}
-	done
+	printf '› Backup coverage\n'
+	if "$BACKUP_VERIFY_COMMAND"; then
+		return 0
+	else
+		status=$?
+	fi
+	printf '  ✗ declared backup coverage verification failed (exit %s)\n' "$status" >&2
+	return "$status"
 }
 
 check_tailscale() {
