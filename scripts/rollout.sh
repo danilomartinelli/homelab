@@ -199,13 +199,13 @@ build_and_compare_closure() {
 build_closure_remotely() {
 	local expected_sha="$1" approval_sha="$2"
 
-	run_remote_script "$expected_sha" "$approval_sha" "$REMOTE_REPO_DIR" "$REMOTE_CURRENT_SYSTEM" <<'REMOTE'
+	run_remote_script "$expected_sha" "$REMOTE_REPO_DIR" "$REMOTE_CURRENT_SYSTEM" "$approval_sha" <<'REMOTE'
 set -euo pipefail
 
 expected_sha="$1"
-approval_sha="${2:-}"
-remote_repo_dir="$3"
-remote_current_system="$4"
+remote_repo_dir="$2"
+remote_current_system="$3"
+approval_sha="${4:-}"
 case "$expected_sha" in
   ''|*[!0-9a-fA-F]*) echo "error: invalid expected deployment revision" >&2; exit 1 ;;
 esac

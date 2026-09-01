@@ -381,8 +381,14 @@ fi
 output_file="$MOCK_TEST_ROOT/ssh-output"
 error_file="$MOCK_TEST_ROOT/ssh-error"
 command_args_start=$((command_index + 1))
+remote_command=()
+for ((index = command_args_start; index <= $#; index++)); do
+	argument="${!index}"
+	[ -n "$argument" ] || continue
+	remote_command+=("$argument")
+done
 set +e
-/bin/bash "${@:command_args_start}" >"$output_file" 2>"$error_file"
+/bin/bash "${remote_command[@]}" >"$output_file" 2>"$error_file"
 status=$?
 set -e
 /bin/cat "$error_file" >&2
@@ -537,7 +543,9 @@ run_rollout_healthcheck() {
 	set -e
 }
 
-run_rollout success 0
+# Regression: OpenSSH serializes the remote command as text, so an empty
+# middle positional argument disappears before the remote heredoc starts.
+run_rollout deploy-without-closure-approval 0
 [ "$CASE_STATUS" -eq 0 ]
 assert_contains "$OUTPUT_FILE" "candidate_closure=$CANDIDATE_CLOSURE"
 assert_contains "$OUTPUT_FILE" "generation=$CANDIDATE_CLOSURE"
