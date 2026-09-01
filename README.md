@@ -27,8 +27,9 @@ homelab/
 │   ├── secrets.nix                 # SOPS materialisation
 │   └── backup.nix                  # Restic backup policy
 ├── scripts/
-│   ├── deploy.sh                   # Safe main -> test -> boot -> reboot deploy
-│   └── healthcheck.sh              # Disk / services / backup status
+│   ├── rollout.sh                  # Shared deploy + healthcheck safety boundary
+│   ├── rollout-host-check.sh       # Nix-installed host health adapter
+│   └── rollout-mock-test.sh        # Offline rollout safety checks
 ├── services/hermes/
 │   ├── config.yaml                 # Read-only managed Hermes policy
 │   └── docker-compose.yml          # Pinned image and gateway runtime
@@ -38,15 +39,75 @@ homelab/
 ## Deploying
 
 ```sh
-scripts/deploy.sh kodo.witek.sh
+scripts/rollout.sh deploy kodo.witek.sh
 ```
 
-The script requires a clean local `main` equal to `origin/main` and a clean
-Git checkout at `/etc/homelab`. It fast-forwards the server, builds and diffs
-the closure, activates it with `test`, verifies a fresh SSH connection, sets
-the boot generation, reboots, and checks the core services after the host
-returns. It uses `~/.ssh/id_ed25519` by default; override that with
+`scripts/rollout.sh deploy [host] [--approve-closure-diff <sha>]` is the
+canonical rollout interface. It requires a clean local `main` equal to
+`origin/main` and a clean Git checkout at `/etc/homelab`. After fetching, it
+freezes the exact
+`origin/main` SHA, requires the remote fetch to produce that same SHA, and
+deploys the SHA rather than a moving branch. It builds and diffs the closure,
+and any ordinary closure difference blocks before `test` unless it is
+explicitly acknowledged with the same frozen SHA:
+
+```sh
+scripts/rollout.sh deploy kodo.witek.sh --approve-closure-diff <frozen-origin-main-sha>
+```
+
+The approval is noninteractive and stale or mismatched SHAs are rejected. The
+rollout creates a temporary detached Git worktree at that exact SHA, verifies
+both its commit and cleanliness, and evaluates `.#kodo` only from that
+immutable committed source. The remote tracked checkout is checked for
+cleanliness again after fast-forward and before building; a change at either
+boundary aborts before activation. After `readlink -f result` captures the
+canonical closure identity, the temporary worktree is removed, and that
+immutable store path is used for both `switch-to-configuration test` and
+`switch-to-configuration boot`; it never re-evaluates the mutable `.#kodo`
+worktree during activation. `test` changes the running system only. Before
+calling the candidate's `boot` activation, the rollout registers that exact
+closure with `nix-env -p /nix/var/nix/profiles/system --set` and verifies the
+canonical system profile points to it; this preserves NixOS generation history
+and rollback tooling when boot configuration is invoked directly. The direct
+`boot` activation installs the bootloader entry for the same closure but does
+not itself update `/run/current-system`; reboot selects the registered boot
+generation. The rollout asserts that `/run/current-system` resolves to the
+exact captured path
+after test activation, after boot, and after reboot, and verifies the profile
+again after reboot before accepting the corresponding host health checks. An
+unapproved difference prints the complete diff and candidate closure identity
+before refusing, and never activates. It then verifies the declared host
+adapter from a fresh SSH connection, captures the pre-reboot boot ID, requires
+an acknowledged reboot schedule and a changed boot ID, and checks the frozen
+checkout again after the host returns. It uses `~/.ssh/id_ed25519` by default;
+override that with
 `HOMELAB_SSH_KEY`.
+
+The safety paths can be exercised offline with controlled fake SSH, Git, Nix,
+activation, reboot, and health commands; no source-text-only expectations are
+used. The test covers diff exits 0/1/>1, visible unapproved diff and candidate
+identity with no activation, closure approval binding, rejection of a dirty
+remote checkout after fast-forward, immutable worktree source and cleanup,
+revision and current-system mismatch aborts, reboot receipt and boot-ID
+failures, and a wrong post-reboot generation:
+
+```sh
+scripts/rollout-mock-test.sh
+```
+
+Run the canonical healthcheck phase through the same interface:
+
+```sh
+scripts/rollout.sh healthcheck kodo.witek.sh
+```
+
+`hosts/kodo/default.nix` installs `homelab-rollout-check` as the host adapter.
+Its `test` phase checks the minimum services safe after
+`switch-to-configuration test`,
+its `reboot` phase adds Hermes readiness and managed STT policy, and its
+`healthcheck` phase reports disk, service, Hermes, backup coverage, and
+Tailscale status. The local rollout code owns sequencing; the Nix host owns
+the facts it can safely observe.
 
 ## The rule that matters
 
@@ -61,7 +122,9 @@ looked like a different bug — DHCP, `/etc/shadow`, mount options, a missing
 declared and this repo did not.
 
 **Before activating any change, diff the built closure against the running
-system.** Not the parts you suspect. All of it:
+system.** Not the parts you suspect. All of it. The rollout does this
+automatically and fails closed on differences; the explicit SHA-bound approval
+above is required only after reviewing every reported difference:
 
 ```sh
 nixos-rebuild build --flake .#kodo
@@ -76,8 +139,9 @@ diff <(cat /run/current-system/kernel-params) <(cat result/kernel-params)
 ```
 
 Lines prefixed `<` are units the new configuration drops. Each one is a
-potential outage. Lines prefixed `>` are intended additions. The diff must
-show no `<` lines you cannot explain.
+potential outage. Lines prefixed `>` are intended additions. Without the
+explicit SHA-bound approval, any difference blocks activation; approval does
+not claim that an unreviewed difference is safe.
 
 This check found `cloud-init`, `growpart.service`, `qemu-guest-agent` and
 `-.mount.wants` in a single pass — after four rounds of reasoning had found
@@ -87,11 +151,11 @@ none of them.
 
 1. `nixos-rebuild build` — produces `./result`, changes nothing
 2. Diff the closure against `/run/current-system` (above)
-3. `nixos-rebuild test` — activates without touching the bootloader
+3. `switch-to-configuration test` on the captured closure — activates without touching the bootloader
 4. **Verify from a NEW connection:** `ssh -o ControlPath=none root@kodo …`
-5. `nixos-rebuild boot`, then reboot, then verify again
+5. `switch-to-configuration boot` on the same captured closure, then reboot, then verify the boot ID and exact generation again
 
-Step 4 is not optional. `nixos-rebuild test` keeps the current SSH session
+Step 4 is not optional. `switch-to-configuration test` keeps the current SSH session
 alive regardless of whether it just destroyed the network configuration, so
 a working session proves nothing. A configuration that breaks networking
 looks identical to one that does not until the machine reboots.

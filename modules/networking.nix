@@ -11,9 +11,9 @@
 #     the following new units were started: dhcpcd.service
 # If dhcpcd appears, addressing is being displaced.
 #
-# `nixos-rebuild test` cannot validate a network change: the established
-# SSH session survives activation, so a broken configuration looks healthy
-# until the next boot. Verify from a NEW connection
+# The rollout's `test` phase cannot validate a network change by itself: the
+# established SSH session survives activation, so a broken configuration looks
+# healthy until the next boot. Verify from a NEW connection
 # (`ssh -o ControlPath=none`) and treat a surviving session as no evidence.
 
 { config, pkgs, lib, ... }:

@@ -5,6 +5,13 @@
 # own so a boot failure has exactly one candidate cause.
 
 { config, pkgs, lib, ... }:
+let
+  rolloutCheck = pkgs.writeShellApplication {
+    name = "homelab-rollout-check";
+    runtimeInputs = with pkgs; [ coreutils docker gawk jq systemd tailscale ];
+    text = builtins.readFile ../../scripts/rollout-host-check.sh;
+  };
+in
 {
   imports = [ ./hardware-configuration.nix ];
 
@@ -177,5 +184,6 @@
     git
     curl
     jq
+    rolloutCheck
   ];
 }
