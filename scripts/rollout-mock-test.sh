@@ -255,7 +255,8 @@ set -euo pipefail
 	exit 2
 }
 printf 'kodo-backup-verify\n' >>"$MOCK_HOST_COMMAND_LOG"
-if [ "${MOCK_HOST_SCENARIO:-}" = all-health-failures ]; then
+if [ "${MOCK_HOST_SCENARIO:-}" = backup-verifier-failure ] ||
+	[ "${MOCK_HOST_SCENARIO:-}" = all-health-failures ]; then
 	exit 1
 fi
 printf 'Latest restic snapshot: 2026-09-01T00:00:00Z\n'
@@ -648,6 +649,14 @@ assert_contains "$OUTPUT_FILE" 'Latest restic snapshot'
 assert_contains "$OUTPUT_FILE" 'Backup coverage verified.'
 assert_contains "$OUTPUT_FILE" '✓ 100.64.0.10'
 assert_contains "$HOST_COMMAND_LOG" 'systemctl is-active --quiet tailscaled'
+assert_contains "$HOST_COMMAND_LOG" 'kodo-backup-verify'
+
+run_rollout_healthcheck backup-verifier-failure
+[ "$CASE_STATUS" -ne 0 ]
+assert_contains "$OUTPUT_FILE" '✗ declared backup coverage verification failed (exit 1)'
+assert_contains "$OUTPUT_FILE" '✓ sshd'
+assert_contains "$OUTPUT_FILE" '✓ healthy'
+assert_contains "$OUTPUT_FILE" '✓ 100.64.0.10'
 assert_contains "$HOST_COMMAND_LOG" 'kodo-backup-verify'
 
 run_rollout_healthcheck all-health-failures
