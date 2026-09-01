@@ -3,8 +3,11 @@
 	email danilomartinelli429@gmail.com
 }
 
-# Existing WhatsApp Cloud API webhook preserved while public ingress moves
-# from the NixOS Caddy unit to Uncloud's global Caddy service.
+# WhatsApp Cloud callback URL: https://hermes.witek.sh/whatsapp/webhook.
+# Keep this matcher and upstream synchronized with the Hermes listener in
+# services/hermes/docker-compose.yml and the firewall permission in
+# modules/ingress.nix; public ingress is separately deployed by the Uncloud
+# Caddy operation.
 hermes.witek.sh {
 	handle /whatsapp/webhook* {
 		reverse_proxy 10.210.0.1:8090 {

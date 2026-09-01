@@ -20,3 +20,5 @@ secrets/*.dec
 secrets/*.plain
 secrets/.env
 !secrets/.env.example
+services/.env
+!services/.env.example

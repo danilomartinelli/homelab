@@ -42,11 +42,13 @@
         group = "keys";
       };
 
-      # The seven WHATSAPP_CLOUD_* values, kept separate from hermes/env so
-      # the systemd unit can gate on this file's existence. `gateway run`
+      # WhatsApp Cloud provider values and the allowed-user restriction, kept
+      # separate from hermes/env so the systemd unit can gate startup on this
+      # path's existence. The precondition checks only that the path exists;
+      # it does not validate secret contents. `gateway run`
       # exits 0 when no messaging platform is configured, which Docker's
-      # restart policy turns into an invisible loop; making "is WhatsApp
-      # configured?" a filesystem question lets ConditionPathExists answer it.
+      # restart policy turns into an invisible loop; the separate secret lets
+      # ConditionPathExists gate startup on the required file presence.
       "hermes/whatsapp-cloud-env" = {
         mode = "0440";
         group = "keys";

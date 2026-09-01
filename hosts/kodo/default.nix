@@ -50,8 +50,8 @@ in
   # It has to be created declaratively: restic skips a nonexistent path
   # SILENTLY — no warning, no non-zero exit. The first backup run looked
   # successful while covering only /etc, which is the failure mode a backup
-  # must never have. Verify coverage with `restic snapshots` and check the
-  # Paths column, not just the exit status.
+  # must never have. `kodo-backup-verify` checks every path declared by the
+  # backup module instead of relying on a successful exit status alone.
   systemd.tmpfiles.rules = [
     "d /var/lib/homelab 0750 root root -"
     # Hermes state. /opt/data inside the container maps here, so it holds
@@ -87,33 +87,20 @@ in
   # -p pins the project name: without it Compose derives one from the
   # directory, which here is a store hash that changes on every edit and
   # would orphan the previous containers.
-  systemd.services = let
-    composeService = name: file: {
-      description = "homelab ${name}";
-      after = [ "docker.service" "network-online.target" ];
-      wants = [ "network-online.target" ];
-      requires = [ "docker.service" ];
-      wantedBy = [ "multi-user.target" ];
-
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} up -d --remove-orphans";
-        ExecStop = "${pkgs.docker}/bin/docker compose -p ${name} -f ${file} down";
-        # Image pulls on a cold start are slow; the default 90s is not enough.
-        TimeoutStartSec = "10min";
-        TimeoutStopSec = "2min";
-      };
-    };
-  in {
+  homelab.compose.stacks = {
     # Chromium first: Hermes reads HERMES_BROWSER_CDP_URL at startup, so the
     # CDP endpoint should already be listening. This is ordering, not a hard
     # dependency — Hermes tolerates the browser being absent and only fails
     # the browser toolset.
-    hermes-chromium = composeService "hermes-chromium" ../../services/hermes-chromium/docker-compose.yml;
+    hermes-chromium = {
+      file = ../../services/hermes-chromium/docker-compose.yml;
+      projectName = "hermes-chromium";
+    };
 
-    hermes = (composeService "hermes" ../../services/hermes/docker-compose.yml) // {
-      after = [ "docker.service" "network-online.target" "hermes-chromium.service" ];
+    hermes = {
+      file = ../../services/hermes/docker-compose.yml;
+      projectName = "hermes";
+      after = [ "hermes-chromium.service" ];
 
       # Docker's env_file injects provider keys into the process, but Hermes
       # doctor/setup intentionally inspect $HERMES_HOME/.env. Mirror the same
@@ -142,12 +129,12 @@ in
       #   /run/secrets/hermes/env — materialised by sops-nix during
       #   activation. Compose aborts on a missing env_file.
       #
-      #   /run/secrets/hermes/whatsapp-cloud-env — the seven
-      #   WHATSAPP_CLOUD_* values. `gateway run` logs "No messaging platforms
-      #   enabled" and exits 0 when no channel is configured, which Docker's
-      #   restart policy turns into the same silent loop. Gating on the
-      #   secret's existence keeps the unit inactive until WhatsApp is
-      #   actually configured.
+      #   /run/secrets/hermes/whatsapp-cloud-env — the WhatsApp Cloud provider
+      #   values and allowed-user restriction. `gateway run` logs "No messaging
+      #   platforms enabled" and exits 0 when no channel is configured, which
+      #   Docker's restart policy turns into the same silent loop. Gating on
+      #   the secret's existence keeps the unit inactive until both required
+      #   paths exist; it does not validate their contents.
       #
       # Note this replaced a condition on $HERMES_HOME/whatsapp/session,
       # which is where the *Baileys* bridge stores its QR-paired session.
@@ -155,10 +142,12 @@ in
       # would have blocked the unit forever — and the symptom would have
       # looked like a systemd fault rather than a stale precondition.
       #
-      # ConditionPathExists makes systemd skip the unit (inactive, not
-      # failed) instead of looping, so `systemctl status hermes` reads as a
-      # missing precondition rather than a crash.
-      unitConfig.ConditionPathExists = [
+      # ConditionPathExists is evaluated at a systemd start attempt and checks
+      # only path existence. A missing path skips the unit (inactive, not
+      # failed); empty or malformed files still satisfy the condition, and
+      # removing a path after startup does not continuously stop an
+      # already-started unit.
+      conditionPathExists = [
         "/run/secrets/hermes/env"
         "/run/secrets/hermes/whatsapp-cloud-env"
       ];
